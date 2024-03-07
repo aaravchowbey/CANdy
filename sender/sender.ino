@@ -15,33 +15,39 @@ void setup() {
   
   Serial.begin(115200);
 
-  if (Can0.begin(SPEED)) {  }
+  if (Can0.begin(SPEED)) {}
   else {
     Serial.println("CAN initialization (sync) ERROR");
-    
   }
 
   PMC->PMC_PCER0 |= PMC_PCER0_PID11; // PIOA power ON
-  
-
-//  //Multiplex CAN_TX to GPIO (Peripheral Enable Register)
-//  PIOA->PIO_PER = PIO_PA0A_CANTX0;
 
   //Set CAN_RX as input (Ouput Disable Register) and
-  //CAN_TX as output (Output Enable Register)
   PIOA->PIO_PER = PIO_PA1A_CANRX0;
   PIOA->PIO_ODR = PIO_PA1A_CANRX0;
 
-//  PIOA->PIO_PER = PIO_PA0A_CANTX0;
-//  PIOA->PIO_OER = PIO_PA0A_CANTX0;
+  PIOA->PIO_PER = PIO_PA0A_CANTX0;
+  PIOA->PIO_OER = PIO_PA0A_CANTX0;
 
   //Disable pull-up on both pins (Pull Up Disable Register)
   PIOA->PIO_PUDR = PIO_PA1A_CANRX0;
   PIOA->PIO_PUDR = PIO_PA0A_CANTX0;
-
-  attachInterrupt(PIO_PA0A_CANTX0, CANdy_Sync, FALLING);
-  Can0.watchFor();
   
+
+  digitalWrite(LED_BUILTIN, LOW);
+  delay(1000);
+
+  Can0.watchFor();
+  attachInterrupt(PIO_PA0A_CANTX0, testFunc, FALLING);
+  delay(1000);
+  detachInterrupt(PIO_PA0A_CANTX0);
+  digitalWrite(LED_BUILTIN, LOW);
+  
+}
+
+void testFunc() {
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(1000);
 }
 
 void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) { //  DO NOT TOUCH
@@ -70,7 +76,6 @@ void CANdy_Sync() { // We will run TC3_Handler
   NVIC_DisableIRQ(TC3_IRQn);
   startTimer(TC1, 0, TC3_IRQn, 1 / HAMMER_POINT); // This allows us to sample exactly at 20% (SAMPLING_POINT == 5) of the bit time (1/f = T). This is where the ringing will be done.
   detachInterrupt(PIO_PA0A_CANTX0);
-  digitalWrite(LED_BUILTIN, HIGH);
 }
 
 void TC3_Handler() {
@@ -87,16 +92,11 @@ void TC3_Handler() {
   // 0 0 0 0 0 1 (STUFF BIT) 0 0...  (+2 ms) (Each bit is 2 ms)
   // No stuff bits after Acknlowedgement bit!
 
-  PIOA->PIO_PER = PIO_PA0A_CANTX0;
-  PIOA->PIO_OER = PIO_PA0A_CANTX0;
   PIOA->PIO_CODR = PIO_PA0A_CANTX0;
-//  PIOA->PIO_ODR = PIO_PA0A_CANTX0;
-//  PIOA->PIO_PDR = PIO_PA0A_CANTX0;
-//  digitalWrite(LED_BUILTIN,  HIGH);
 
 }
 
-void sendData() {
+void sendData() { // THIS IS CORRECT DON'T TOUCH
   
   CAN_FRAME outgoing;
   outgoing.id = 0x400;
@@ -118,14 +118,8 @@ void sendData() {
 }
 
 void loop() {
-//  static unsigned long lastTime = 0;
-//  
-//  if ((millis() - lastTime) > 1000) {
-//    lastTime = millis();
-//    sendData();
-//  }
   
   delay(500);
-  PIOA->PIO_SODR = PIO_PA0A_CANTX0;
+  sendData();
   
 }
