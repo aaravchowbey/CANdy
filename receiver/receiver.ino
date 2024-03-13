@@ -14,6 +14,8 @@ void setup()
 {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN,  LOW);
+  delay(500);
+  digitalWrite(LED_BUILTIN, HIGH);
   Serial.begin(115200);
   
   // Initialize CAN0 and CAN1, Set the proper baud rates here
@@ -48,6 +50,8 @@ void printFrame(CAN_FRAME &frame) {
        Serial.print(" ");
    }
    Serial.print("\r\n");
+   
+  digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
 }
 
 void loop(){

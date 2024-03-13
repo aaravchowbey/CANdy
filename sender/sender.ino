@@ -26,28 +26,26 @@ void setup() {
   PIOA->PIO_PER = PIO_PA1A_CANRX0;
   PIOA->PIO_ODR = PIO_PA1A_CANRX0;
 
-  PIOA->PIO_PER = PIO_PA0A_CANTX0;
+  PIOA->PIO_PDR = PIO_PA0A_CANTX0; // unable to send data w/ PER so changed to PDR (2024-03-13)
   PIOA->PIO_OER = PIO_PA0A_CANTX0;
 
   //Disable pull-up on both pins (Pull Up Disable Register)
   PIOA->PIO_PUDR = PIO_PA1A_CANRX0;
   PIOA->PIO_PUDR = PIO_PA0A_CANTX0;
-  
 
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(500);
   digitalWrite(LED_BUILTIN, LOW);
   delay(1000);
 
   Can0.watchFor();
-  attachInterrupt(PIO_PA0A_CANTX0, testFunc, FALLING);
-  delay(1000);
-  detachInterrupt(PIO_PA0A_CANTX0);
-  digitalWrite(LED_BUILTIN, LOW);
-  
+  attachInterrupt(PIO_PA1A_CANRX0, testFunc, FALLING);
 }
 
 void testFunc() {
   digitalWrite(LED_BUILTIN, HIGH);
-  delay(1000);
+  detachInterrupt(PIO_PA1A_CANRX0);
+  digitalWrite(LED_BUILTIN, LOW);
 }
 
 void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) { //  DO NOT TOUCH
@@ -69,14 +67,14 @@ void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) { /
   NVIC_EnableIRQ(irq);
   
 }
-
-void CANdy_Sync() { // We will run TC3_Handler
-  
-  sof = true;
-  NVIC_DisableIRQ(TC3_IRQn);
-  startTimer(TC1, 0, TC3_IRQn, 1 / HAMMER_POINT); // This allows us to sample exactly at 20% (SAMPLING_POINT == 5) of the bit time (1/f = T). This is where the ringing will be done.
-  detachInterrupt(PIO_PA0A_CANTX0);
-}
+//
+//void CANdy_Sync() { // We will run TC3_Handler
+//  
+//  sof = true;
+//  NVIC_DisableIRQ(TC3_IRQn);
+//  startTimer(TC1, 0, TC3_IRQn, HAMMER_POINT); // This allows us to sample exactly at 20% (SAMPLING_POINT == 5) of the bit time (1/f = T). This is where the ringing will be done.
+//  detachInterrupt(PIO_PA0A_CANTX0);
+//}
 
 void TC3_Handler() {
   
@@ -97,7 +95,6 @@ void TC3_Handler() {
 }
 
 void sendData() { // THIS IS CORRECT DON'T TOUCH
-  
   CAN_FRAME outgoing;
   outgoing.id = 0x400;
   outgoing.extended = false;
@@ -113,13 +110,30 @@ void sendData() { // THIS IS CORRECT DON'T TOUCH
   outgoing.data.byte[6] = 0x66;
   outgoing.data.byte[7] = 0x77;
 
-  Can0.sendFrame(outgoing);
-  
+  if (Can0.sendFrame(outgoing)) {
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+  }
 }
 
+//void CANdy_Hammer() { // Now every bit time, we will run TC3_Handler
+//  NVIC_DisableIRQ(TC6_IRQn);
+//  startTimer(TC2, 0, TC6_IRQn, 1/HAMMER_TIME);   // This allows us to sample exactly at 20% (SAMPLING_POINT == 5) of the bit time. This is where the ringing will be done.
+//  hammerIndex = 0;
+//  detachInterrupt(40);
+//}
+
+//void TC6_Handler() {
+//  if (hammerBits[hammerIndex] && hammerIndex < hammerSize) {
+//    CANdy_write(1);
+//    Serial.write("High");
+//  } else if (hammerIndex < hammerSize) {
+//    CANdy_write(0);
+//    Serial.write("Low");
+//  }
+//  hammerIndex++;
+//}
+
 void loop() {
-  
-  delay(500);
+  delay(1000);
   sendData();
-  
 }

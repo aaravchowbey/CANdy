@@ -1,0 +1,9 @@
+*
+!/.gitignore
+
+!/README.md
+
+!/sender/
+!/sender/sender.ino
+!/receiver/
+!/receiver/receiver.ino
