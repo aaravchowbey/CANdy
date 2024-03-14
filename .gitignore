@@ -3,6 +3,8 @@
 
 !/README.md
 
+!/makefile
+
 !/sender/
 !/sender/sender.ino
 !/receiver/
