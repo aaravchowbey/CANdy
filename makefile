@@ -16,3 +16,7 @@ receiver:
 	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.[] | select($(RECEIVER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
 	arduino-cli compile $$FLAGS $@ && \
 	arduino-cli upload $$FLAGS $@
+
+monitor:
+	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.[] | select(.port.properties.pid == "0x003e") | "-p \(.port.address)"'); \
+	arduino-cli monitor $$FLAGS
