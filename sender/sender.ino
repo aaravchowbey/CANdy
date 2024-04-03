@@ -12,6 +12,7 @@ const int hammerBits[hammerSize] = {1, 1, 1, 1};
 int hammerIndex = 0;
 
 volatile int a = 0;
+static unsigned long lastTime = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -66,10 +67,13 @@ void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) { /
 void CANdy_Sync() {
   NVIC_DisableIRQ(TC3_IRQn);
 
+  // use to check if CANdy_Sync is running; appears to not run more than one time!
+  digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+
   // TC3_Handler will run after time specified in HAMMER_POINT (middle of first bit in data bytes)
   startTimer(TC1, 0, TC3_IRQn, 1 / HAMMER_POINT);
 
-  detachInterrupt(PIO_PA0A_CANTX0);
+  detachInterrupt(PIO_PA1A_CANRX0);
 }
 
 /**
@@ -77,16 +81,16 @@ void CANdy_Sync() {
   */
 void TC3_Handler() {
   if (!sof) {
+    // disable IRQn for TC3 to "stop" timer
+    NVIC_DisableIRQ(TC3_IRQn);
     return;
   }
-
-  sof = false;
 
   TC_GetStatus(TC1, 0);
 
   // PIO_PA1A_CANRX0 = If there is a bit
   // PIO_PDSR = Time efficency (digial inputs)
-  bool value = PIOA->PIO_PDSR & PIO_PA0A_CANTX0; // We read/sample the bit here
+  bool value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0; // We read/sample the bit here (changed to CANRX instead of CANTX)
 
   // sof = Start of Frame (goes through each frame) (Should be 0)
   // Stuff bit = If there is a row of 5 consistant bits, then add a stuff bit of the opposite bit
@@ -106,6 +110,8 @@ void TC3_Handler() {
   // turn off multiplexing
   PIOA->PIO_PDR = PIO_PA0A_CANTX0;
   PIOA->PIO_ODR = PIO_PA0A_CANTX0;
+
+  sof = false;
 }
 
 
@@ -123,7 +129,7 @@ void sendData(const uint8_t* data, const int dataLength) {
   sof = true;
   if (Can0.sendFrame(outgoing)) {
     // if frame successfully sent, flip LED state
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    // digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
   }
 }
 
@@ -169,9 +175,16 @@ void loop() {
   // const uint8_t data[dataLength] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77};
   const uint8_t data[dataLength] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-  delay(1000);
-  sendData(data, dataLength);
-  // if (sof == false) {
-  //   attachInterrupt(PIO_PA1A_CANRX0, CANdy_Sync, FALLING); //Indicates SOF
-  // }
+  // NOTE: avoid use of delay since it does not work well w/ interrupts
+  if (millis() - lastTime > 1000) {
+    lastTime = millis();
+    sendData(data, dataLength);
+  }
+
+  //if (!sof) {
+
+  // TODO: attempt attaching interrupt to CANRX to start CANdy_Sync (only runs once)
+  attachInterrupt(PIO_PA1A_CANRX0, CANdy_Sync, FALLING);
+
+  //}
 }
