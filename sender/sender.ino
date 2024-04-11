@@ -5,8 +5,6 @@
 #define HAMMER_POINT 85e-6
 #define SPEED CAN_BPS_250K
 
-volatile bool sof = false;
-
 const int hammerSize = 4;
 const int hammerBits[hammerSize] = {1, 1, 1, 1};
 int hammerIndex = 0;
@@ -39,8 +37,6 @@ void setup() {
   delay(1000);
 
   Can0.watchFor();
-
-  attachInterrupt(PIO_PA1A_CANRX0, CANdy_Sync, FALLING);
 }
 
 void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) { //  DO NOT TOUCH
@@ -61,60 +57,6 @@ void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) { /
   NVIC_EnableIRQ(irq);
 }
 
-/**
- * Synchronizes hammering with message by starting timer for hammering; runs TC3_Handler
- */
-void CANdy_Sync() {
-  NVIC_DisableIRQ(TC3_IRQn);
-
-  // use to check if CANdy_Sync is running; appears to not run more than one time!
-  digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-
-  // TC3_Handler will run after time specified in HAMMER_POINT (middle of first bit in data bytes)
-  startTimer(TC1, 0, TC3_IRQn, 1 / HAMMER_POINT);
-
-  detachInterrupt(PIO_PA1A_CANRX0);
-}
-
-/**
-  * Samples value of bit being sent, starts CANdy_Hammer, and resets value of bit
-  */
-void TC3_Handler() {
-  if (!sof) {
-    // disable IRQn for TC3 to "stop" timer
-    NVIC_DisableIRQ(TC3_IRQn);
-    return;
-  }
-
-  TC_GetStatus(TC1, 0);
-
-  // PIO_PA1A_CANRX0 = If there is a bit
-  // PIO_PDSR = Time efficency (digial inputs)
-  bool value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0; // We read/sample the bit here (changed to CANRX instead of CANTX)
-
-  // sof = Start of Frame (goes through each frame) (Should be 0)
-  // Stuff bit = If there is a row of 5 consistant bits, then add a stuff bit of the opposite bit
-  // Stuff Bit contains no useful information!
-  // 0 0 0 0 0 1 (STUFF BIT) 0 0...  (+2 ms) (Each bit is 2 ms)
-  // No stuff bits after Acknowledgement bit!
-
-  // disable output of CANTX
-  PIOA->PIO_PDR = PIO_PA0A_CANTX0;
-  PIOA->PIO_ODR = PIO_PA0A_CANTX0;
-
-  attachInterrupt(40, CANdy_Hammer, HIGH);
-  digitalWrite(40, HIGH);
-
-  CANdy_Write(value);
-
-  // turn off multiplexing
-  PIOA->PIO_PDR = PIO_PA0A_CANTX0;
-  PIOA->PIO_ODR = PIO_PA0A_CANTX0;
-
-  sof = false;
-}
-
-
 void sendData(const uint8_t* data, const int dataLength) {
   CAN_FRAME outgoing;
   outgoing.id = 0x400;
@@ -126,48 +68,10 @@ void sendData(const uint8_t* data, const int dataLength) {
     outgoing.data.byte[i] = data[i];
   }
 
-  sof = true;
   if (Can0.sendFrame(outgoing)) {
     // if frame successfully sent, flip LED state
-    // digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
   }
-}
-
-void CANdy_Hammer() { // Now every bit time, we will run TC3_Handler
-  NVIC_DisableIRQ(TC6_IRQn);
-
-  // This allows us to sample exactly at 20% (SAMPLING_POINT == 5) of the bit time. This is where the ringing will be done.
-  startTimer(TC2, 0, TC6_IRQn, hammerSize * SPEED);
-  hammerIndex = 0;
-  detachInterrupt(40);
-}
-
-void CANdy_Write(bool value) {
-  // multiplex CANTX to GPIO and define as output
-  PIOA->PIO_PER = PIO_PA0A_CANTX0;
-  PIOA->PIO_OER = PIO_PA0A_CANTX0;
-
-  // TODO: check if this is meant to be PIOC or PIOA
-  (value ? PIOA->PIO_SODR : PIOA->PIO_CODR) = PIO_PA0A_CANTX0;
-
-  // turn off multiplexing
-  // PIOA->PIO_PDR = PIO_PA0A_CANTX0;
-  // PIOA->PIO_ODR = PIO_PA0A_CANTX0;
-}
-
-void TC6_Handler() {
-  // turn off multiplexing
-  PIOA->PIO_PDR = PIO_PA0A_CANTX0;
-  PIOA->PIO_ODR = PIO_PA0A_CANTX0;
-
-  TC_GetStatus(TC2, 0);
-
-  if (hammerIndex < hammerSize) {
-    // digitalWrite(LED_BUILTIN, HIGH);
-    CANdy_Write(hammerBits[hammerIndex]);
-  }
-
-  hammerIndex++;
 }
 
 void loop() {
@@ -180,11 +84,4 @@ void loop() {
     lastTime = millis();
     sendData(data, dataLength);
   }
-
-  //if (!sof) {
-
-  // TODO: attempt attaching interrupt to CANRX to start CANdy_Sync (only runs once)
-  attachInterrupt(PIO_PA1A_CANRX0, CANdy_Sync, FALLING);
-
-  //}
 }
