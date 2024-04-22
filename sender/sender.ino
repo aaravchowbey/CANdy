@@ -82,6 +82,6 @@ void loop() {
   // NOTE: avoid use of delay since it does not work well w/ interrupts
   if (millis() - lastTime > 1000) {
     lastTime = millis();
-    sendData(data, dataLength);
+    // sendData(data, dataLength);
   }
 }

@@ -5,37 +5,43 @@
 #define HAMMER_POINT 85e-6
 #define SPEED CAN_BPS_250K
 
+#define LED_HIGH() do { PIOB->PIO_SODR = PIO_PB27; ledState = true; } while(0)
+#define LED_LOW()  do { PIOB->PIO_CODR = PIO_PB27; ledState = false; } while(0)
+#define LED_FLIP() do { if (ledState) LED_LOW(); else LED_HIGH(); } while(0)
+
+volatile bool ledState = false;
+volatile bool interruptAdded = false;
+
 volatile bool sof = false;
 
 const int hammerSize = 4;
 const int hammerBits[hammerSize] = {1, 1, 1, 1};
 int hammerIndex = 0;
 
-volatile int a = 0;
-static unsigned long lastTime = 0;
-
 void setup() {
   Serial.begin(115200);
-  pinMode(LED_BUILTIN, OUTPUT);
 
   Can0.begin(SPEED);
+  Can1.begin(SPEED);
 
   PMC->PMC_PCER0 |= PMC_PCER0_PID11; // PIOA power ON
+  PMC->PMC_PCER0 |= PMC_PCER0_PID12; // PIOB power ON
+
+  // multiplex LED and enable output
+  PIOB->PIO_PER = PIO_PB27;
+  PIOB->PIO_OER = PIO_PB27;
 
   // set CAN_RX as input (Output Disable Register) and
   PIOA->PIO_PER = PIO_PA1A_CANRX0;
-  PIOA->PIO_ODR = PIO_PA1A_CANRX0;
-
-  PIOA->PIO_PDR = PIO_PA0A_CANTX0; // unable to send data w/ PER so changed to PDR (2024-03-13)
-  PIOA->PIO_OER = PIO_PA0A_CANTX0;
+  PIOA->PIO_OER = PIO_PA1A_CANRX0;
 
   // disable pull-up on both pins (Pull Up Disable Register)
   PIOA->PIO_PUDR = PIO_PA1A_CANRX0;
   PIOA->PIO_PUDR = PIO_PA0A_CANTX0;
 
-  digitalWrite(LED_BUILTIN, HIGH);
+  LED_HIGH();
   delay(500);
-  digitalWrite(LED_BUILTIN, LOW);
+  LED_LOW();
   delay(1000);
 
   Can0.watchFor();
@@ -65,26 +71,27 @@ void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) { /
  * Synchronizes hammering with message by starting timer for hammering; runs TC3_Handler
  */
 void CANdy_Sync() {
+  // used to check if CANdy_Sync is running
+  LED_HIGH();
+
+  detachInterrupt(PIO_PA1A_CANRX0);
+
   if (sof) {
     return;
   }
 
   sof = true;
 
-  digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-  // Serial.println(sof);
-  NVIC_DisableIRQ(TC3_IRQn);
-
-  // use to check if CANdy_Sync is running; appears to not run more than one time!
-  //digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+  // NVIC_DisableIRQ(TC3_IRQn);
 
   // TC3_Handler will run after time specified in HAMMER_POINT (middle of first bit in data bytes)
-  startTimer(TC1, 0, TC3_IRQn, 1 / HAMMER_POINT);
+  // startTimer(TC1, 0, TC3_IRQn, 1 / HAMMER_POINT);
 
-  detachInterrupt(PIO_PA1A_CANRX0);
-
-  delayMicroseconds(496);
+  delayMicroseconds(100000);
   sof = false;
+  interruptAdded = false;
+
+  LED_LOW();
 }
 
 /**
@@ -162,7 +169,17 @@ void TC6_Handler() {
 }
 
 void loop() {
-  if (!sof) {
-    attachInterrupt(PIO_PA1A_CANRX0, CANdy_Sync, FALLING);
+  // attach multiple interrupts may lead to problem??? <https://forum.arduino.cc/t/attaching-interrupt-in-loop/1031388/3>
+  bool locSof, locInterruptAdded;
+  noInterrupts();
+  locSof = sof;
+  locInterruptAdded = interruptAdded;
+  if (!sof && !interruptAdded) {
+    interruptAdded = true;
+  }
+  interrupts();
+
+  if (!locSof && !locInterruptAdded) {
+    attachInterrupt(PIO_PA1A_CANRX0, CANdy_Sync, LOW);
   }
 }
