@@ -21,8 +21,8 @@ int hammerIndex = 0;
 void setup() {
   Serial.begin(115200);
 
-  Can0.begin(SPEED);
-  Can1.begin(SPEED);
+  // Can0.begin(SPEED);
+  // Can1.begin(SPEED);
 
   PMC->PMC_PCER0 |= PMC_PCER0_PID11; // PIOA power ON
   PMC->PMC_PCER0 |= PMC_PCER0_PID12; // PIOB power ON
@@ -33,7 +33,7 @@ void setup() {
 
   // set CAN_RX as input (Output Disable Register) and
   PIOA->PIO_PER = PIO_PA1A_CANRX0;
-  PIOA->PIO_OER = PIO_PA1A_CANRX0;
+  PIOA->PIO_ODR = PIO_PA1A_CANRX0;
 
   // disable pull-up on both pins (Pull Up Disable Register)
   PIOA->PIO_PUDR = PIO_PA1A_CANRX0;
@@ -44,9 +44,9 @@ void setup() {
   LED_LOW();
   delay(1000);
 
-  Can0.watchFor();
+  // Can0.watchFor();
 
-  // attachInterrupt(PIO_PA1A_CANRX0, CANdy_Sync, FALLING);
+  // attachInterrupt(digitalPinToInterrupt(PIO_PA1A_CANRX0), CANdy_Sync, FALLING);
 }
 
 void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) { //  DO NOT TOUCH
@@ -74,24 +74,24 @@ void CANdy_Sync() {
   // used to check if CANdy_Sync is running
   LED_HIGH();
 
-  detachInterrupt(PIO_PA1A_CANRX0);
-
   if (sof) {
+    detachInterrupt(PIO_PA1A_CANRX0);
     return;
   }
 
   sof = true;
 
-  // NVIC_DisableIRQ(TC3_IRQn);
+  NVIC_DisableIRQ(TC3_IRQn);
 
   // TC3_Handler will run after time specified in HAMMER_POINT (middle of first bit in data bytes)
-  // startTimer(TC1, 0, TC3_IRQn, 1 / HAMMER_POINT);
+  startTimer(TC1, 0, TC3_IRQn, 1 / HAMMER_POINT);
 
   delayMicroseconds(100000);
   sof = false;
   interruptAdded = false;
 
   LED_LOW();
+  detachInterrupt(PIO_PA1A_CANRX0);
 }
 
 /**
@@ -180,6 +180,8 @@ void loop() {
   interrupts();
 
   if (!locSof && !locInterruptAdded) {
-    attachInterrupt(PIO_PA1A_CANRX0, CANdy_Sync, LOW);
+  // if (!sof && !interruptAdded) {
+  //   interruptAdded = true;
+    attachInterrupt(digitalPinToInterrupt(PIO_PA1A_CANRX0), CANdy_Sync, FALLING);
   }
 }
