@@ -4,7 +4,7 @@
 #define Serial SerialUSB
 
 #define SPEED        CAN_BPS_250K
-#define HAMMER_POINT 84.6e-6
+#define HAMMER_POINT 84.0e-6
 #define HAMMER_SIZE 2
 
 #define LED_HIGH() do { PIOB->PIO_SODR = PIO_PB27; ledState = true; } while(0)
@@ -23,12 +23,12 @@ volatile int hammerIndex = 0;
 void TC3_Handler() {
   TC_GetStatus(TC1, 0);
 
-  queue = queue << 1 | (PIOA->PIO_PDSR & PIO_PA1A_CANRX0) & 0b111111111111111;
+  queue = (queue << 1 | (!!(PIOA->PIO_PDSR & PIO_PA1A_CANRX0))) & 0b111111111111111;
 
   if (queue == 0b111111111111110) {
     sof = true;
-    NVIC_DisableIRQ(TC6_IRQn);
-    startTimer(TC2, 0, TC6_IRQn, 1 / HAMMER_POINT);
+
+    startTimer(TC2, 0, TC6_IRQn, (uint32_t)(1 / HAMMER_POINT));
   }
 }
 
@@ -36,23 +36,26 @@ void TC6_Handler() {
   TC_GetStatus(TC2, 0);
 
   if (!sof) {
-    stopTimer(TC6_IRQn);
+    stopTimer(TC2, 0, TC6_IRQn);
 
     return;
   }
 
   sof = false;
 
-  resetValue = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
+  resetValue = !!(PIOA->PIO_PDSR & PIO_PA1A_CANRX0);
 
   // start hammering
   hammerIndex = 0;
 
+  LED_FLIP();
   PIOA->PIO_PER = PIO_PA0A_CANTX0;
   PIOA->PIO_OER = PIO_PA0A_CANTX0;
 
-  NVIC_DisableIRQ(TC7_IRQn);
-  startTimer(TC2, 1, TC7_IRQn, HAMMER_SIZE * SPEED);
+  startTimer(TC2, 1, TC7_IRQn, 4000000);
+
+  PIOA->PIO_PDR = PIO_PA0A_CANTX0;
+  PIOA->PIO_ODR = PIO_PA0A_CANTX0;
 }
 
 void TC7_Handler() {
@@ -62,15 +65,10 @@ void TC7_Handler() {
     CANdy_Write(hammerBits[hammerIndex]);
     hammerIndex++;
   } else {
+    stopTimer(TC2, 1, TC7_IRQn);
     CANdy_Write(resetValue);
 
-    // turn off multiplexing
-    PIOA->PIO_PDR = PIO_PA0A_CANTX0;
-    PIOA->PIO_ODR = PIO_PA0A_CANTX0;
-
     LED_FLIP();
-
-    stopTimer(TC7_IRQn);
   }
 }
 
@@ -81,6 +79,10 @@ void CANdy_Write(bool value) {
   } else {
     PIOA->PIO_CODR = PIO_PA0A_CANTX0;
   }
+
+  // // turn off multiplexing
+  // PIOA->PIO_PDR = PIO_PA0A_CANTX0;
+  // PIOA->PIO_ODR = PIO_PA0A_CANTX0;
 }
 
 void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
@@ -101,9 +103,9 @@ void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
   NVIC_EnableIRQ(irq);
 }
 
-void stopTimer(IRQn_Type irq) {
-	NVIC_DisableIRQ(irq);
-	pmc_disable_periph_clk((uint32_t)irq);
+void stopTimer(Tc* tc, uint32_t channel, IRQn_Type irq) {
+  NVIC_DisableIRQ(irq);
+  TC_Stop(tc, channel);
 }
 
 void setup() {
@@ -138,7 +140,6 @@ void setup() {
 
   Can0.watchFor();
 
-  NVIC_DisableIRQ(TC3_IRQn);
   startTimer(TC1, 0, TC3_IRQn, SPEED);
 }
 

@@ -2,8 +2,8 @@
 
 all: sender receiver hammer
 
-SENDER_ID   := .port.properties.serialNumber == "75932313638351300251" or .port.properties.pid == "0x003e"
-RECEIVER_ID := .port.properties.serialNumber == "85138313234351E09162"
+SENDER_ID   := .port.properties.serialNumber == "75932313638351300251"
+RECEIVER_ID := .port.properties.serialNumber == "85138313234351E09162" or .port.properties.pid == "0x003e"
 HAMMER_ID   := .port.properties.serialNumber == "75932313638351803271"
 # HAMMER_ID   := .port.properties.serialNumber == "85036313130351715042"
 
