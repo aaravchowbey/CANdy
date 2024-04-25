@@ -12,12 +12,17 @@
 
 volatile bool ledState = false;
 
+unsigned short int queue = 0b111111111111111;
+
 void TC3_Handler() {
   TC_GetStatus(TC1, 0);
 
-  bool value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
-}
+  queue = queue << 1 | (PIOA->PIO_PDSR & PIO_PA1A_CANRX0) & 0b111111111111111;
 
+  if (queue == 0b111111111111110) {
+    LED_FLIP();
+  }
+}
 
 void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
   //Enable or disable write protect of PMC registers.
@@ -35,15 +40,6 @@ void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
   tc->TC_CHANNEL[channel].TC_IER = TC_IER_CPCS;
   tc->TC_CHANNEL[channel].TC_IDR = ~TC_IER_CPCS;
   NVIC_EnableIRQ(irq);
-}
-
-void CANdy_Sync() {
-  LED_HIGH();
-
-  sof = true;
-
-  NVIC_DisableIRQ(TC3_IRQn);
-  startTimer(TC1, 0, TC3_IRQn, 1.0 / HAMMER_POINT);
 }
 
 void setup() {
@@ -77,6 +73,9 @@ void setup() {
   delay(1000);
 
   Can0.watchFor();
+
+  NVIC_DisableIRQ(TC3_IRQn);
+  startTimer(TC1, 0, TC3_IRQn, SPEED);
 }
 
 void loop() {
