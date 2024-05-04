@@ -15,7 +15,8 @@ volatile bool ledState = false;
 volatile bool sof = false;
 volatile bool resetValue = false;
 
-unsigned short int queue = 0b111111111111111;
+unsigned short int bus_queue = 0b111111111111111;
+unsigned long int frame_queue = 0;
 
 const bool hammerBits[HAMMER_SIZE] = {1, 0};
 volatile int hammerIndex = 0;
@@ -23,13 +24,50 @@ volatile int hammerIndex = 0;
 void TC3_Handler() {
   TC_GetStatus(TC1, 0);
 
-  queue = (queue << 1 | (!!(PIOA->PIO_PDSR & PIO_PA1A_CANRX0))) & 0b111111111111111;
+  bool value = (PIOA->PIO_PDSR & PIO_PA1A_CANRX0);
 
-  if (queue == 0b111111111111110) {
+  bus_queue = (bus_queue << 1 | value) & 0b111111111111111;
+
+  if (bus_queue == 0b111111111111110) {
     sof = true;
 
-    startTimer(TC2, 0, TC6_IRQn, (uint32_t)(1 / HAMMER_POINT));
+    // startTimer(TC2, 0, TC6_IRQn, (uint32_t)(1 / HAMMER_POINT));
   }
+
+  if (sof) {
+    if (!(value == 0 && (bus_queue & 0b11111) == 0b11111) &&
+        !(value == 1 && (bus_queue & 0b11111) == 0b00000)) {
+      frame_queue = frame_queue << 1 | value;
+    }
+
+    if ((frame_queue & (1 << 0)) == 0 &&            // start-of-frame
+        (frame_queue & (1 << 12)) == 0 &&           // RTR (data frame = 0)
+        (frame_queue & (1 << 13)) == 0 &&           // IDE
+        (frame_queue & (1 << 14)) == 0 &&           // reserved bit
+        (frame_queue & 0b1111000000000000000) != 0  // DLC (> 0)
+    ) {
+      frame_queue = 0;
+      sof = false;
+
+      CANdy_Hammer();
+    }
+  }
+}
+
+void CANdy_Hammer() {
+  resetValue = (PIOA->PIO_PDSR & PIO_PA1A_CANRX0) != 0;
+
+  // start hammering
+  hammerIndex = 0;
+
+  LED_FLIP();
+  PIOA->PIO_PER = PIO_PA0A_CANTX0;
+  PIOA->PIO_OER = PIO_PA0A_CANTX0;
+
+  startTimer(TC2, 1, TC7_IRQn, 1 / 2.0e-6);
+
+  PIOA->PIO_PDR = PIO_PA0A_CANTX0;
+  PIOA->PIO_ODR = PIO_PA0A_CANTX0;
 }
 
 void TC6_Handler() {
@@ -43,7 +81,7 @@ void TC6_Handler() {
 
   sof = false;
 
-  resetValue = !!(PIOA->PIO_PDSR & PIO_PA1A_CANRX0);
+  resetValue = (PIOA->PIO_PDSR & PIO_PA1A_CANRX0) != 0;
 
   // start hammering
   hammerIndex = 0;
@@ -73,7 +111,6 @@ void TC7_Handler() {
 }
 
 void CANdy_Write(bool value) {
-  // TODO: fix this!!!
   if (value) {
     PIOA->PIO_SODR = PIO_PA0A_CANTX0;
   } else {
@@ -106,6 +143,10 @@ void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
 void stopTimer(Tc* tc, uint32_t channel, IRQn_Type irq) {
   NVIC_DisableIRQ(irq);
   TC_Stop(tc, channel);
+} 
+
+void TC8_Handler() {
+
 }
 
 void setup() {
