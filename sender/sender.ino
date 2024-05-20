@@ -3,7 +3,7 @@
 
 #define Serial SerialUSB
 #define HAMMER_POINT 85e-6
-#define SPEED CAN_BPS_250K
+#define SPEED CAN_BPS_50K
 
 const int hammerSize = 4;
 const int hammerBits[hammerSize] = {1, 1, 1, 1};
