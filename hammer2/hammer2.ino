@@ -18,16 +18,21 @@
    (ONE_BITS(num_bits * SAMPLING_RATE) << (SAMPLING_RATE * pos % 64)))
 
 volatile bool ledState = false;
+
 volatile bool sof = false;
 volatile bool resetValue = false;
 
 uint64_t bus_queue[3] = {UINT64_MAX, UINT64_MAX, UINT64_MAX};
 uint64_t frame_queue[3] = {0};
 
+// data bits to hammer
 const bool hammerData[HAMMER_BIT_COUNT] = {0, 1};
-// const int hammerBits = 0b10;
+
+// current index of hammerData
 volatile int hammerIndex = 0;
-int hammerAmount = 0;
+
+// bit in frame has been completely hammered
+volatile bool frameBitHammered = false;
 
 void TC3_Handler() {
   TC_GetStatus(TC1, 0);
@@ -55,20 +60,13 @@ void TC3_Handler() {
       frame_queue[0] = (frame_queue[0] << 1) | value;
     }
 
-    // if ((frame_queue[1] & (ONE_BITS(10) << 52)) == 0 &&   // start-of-frame
-    //     (frame_queue[1] & ONE_BITS(6)) == 0 &&      // RTR (must be 0 for data frame)
-    //     (frame_queue[0] & (ONE_BITS(4) << 60)) == 0 &&
-    //     (frame_queue[0] & (ONE_BITS(10) << 50)) == 0 &&      // IDE
-    //     (frame_queue[0] & (ONE_BITS(10) << 40)) == 0 &&      // reserved bit
-    //     (frame_queue[0] & (ONE_BITS(10) << 0)) != 0         // DLC (must be >0)
-
     if (
-        BITS_AT_POS(frame_queue, 18, 1) == 0 &&     // start-of-frame
-        (frame_queue[1] & ONE_BITS(6)) == 0 &&      // RTR (must be 0 for data frame)
-        (frame_queue[0] & (ONE_BITS(4) << 60)) == 0 &&
-        BITS_AT_POS(frame_queue, 5, 1) == 0 &&      // IDE
-        BITS_AT_POS(frame_queue, 4, 1) == 0 &&      // reserved bit
-        BITS_AT_POS(frame_queue, 0, 4) != 0         // DLC (must be >0)
+        BITS_AT_POS(frame_queue, 18, 1) == 0 &&        // start-of-frame
+        (frame_queue[1] & ONE_BITS(6)) == 0 &&         // RTR (must be 0 for data frame) (first 6 samples)
+        (frame_queue[0] & (ONE_BITS(4) << 60)) == 0 && //                                (last 4 samples)
+        BITS_AT_POS(frame_queue, 5, 1) == 0 &&         // IDE
+        BITS_AT_POS(frame_queue, 4, 1) == 0 &&         // reserved bit
+        BITS_AT_POS(frame_queue, 0, 4) != 0            // DLC (must be >0)
     ) {
       frame_queue[2] = frame_queue[1] = frame_queue[0] = 0;
       sof = false;
@@ -78,45 +76,56 @@ void TC3_Handler() {
   }
 }
 
+// starts hammering
 void CANdy_Hammer() {
-  // start hammering
   hammerIndex = 0;
   
-  startTimer(TC2, 2, TC8_IRQn, SPEED);
+  startTimer(TC2, 0, TC6_IRQn, SPEED);
 }
 
-void TC8_Handler() {
-  TC_GetStatus(TC2, 2);
+// handles hammering bits for all data bits
+void TC6_Handler() {
+  TC_GetStatus(TC2, 0);
 
-  if (hammerIndex < HAMMER_BIT_COUNT) {          //Will stop when there are no more bits to hammer in
+  if (hammerIndex < HAMMER_BIT_COUNT) {
+    // if bits left to hammer, setup hammering for one data bit
     resetValue = (PIOA->PIO_PDSR & PIO_PA1A_CANRX0) != 0;
 
-    hammerAmount = 0;                           //Number of data bits stuffed into CAN bit so far
     // turn on multiplexing
     PIOA->PIO_PER = PIO_PA0A_CANTX0;
     PIOA->PIO_OER = PIO_PA0A_CANTX0;
 
-    startTimer(TC2, 1, TC7_IRQn, SPEED * 5);    //start timer to fire 5 times a bit
+    // start TC7 to fire 5 times in a bit
+    startTimer(TC2, 1, TC7_IRQn, SPEED * 5);
   } else {
-    stopTimer(TC2, 2, TC8_IRQn);
+    // stop timer when no more bits to hammer
+    stopTimer(TC2, 0, TC6_IRQn);
   }
 }
 
+// handles hammering bits for one data bit
 void TC7_Handler() {
   TC_GetStatus(TC2, 1); 
 
-  if (hammerAmount < HAMMER_SIZE) {
+  if (!frameBitHammered) {
+    // if bit in frame has not been completely hammered, continue with hammering
     CANdy_Write(hammerData[hammerIndex]);
-    hammerIndex++;    //move one higher on array
-    hammerAmount++;   //+1 amount of bits that have been stuffed into current CAN bit
+
+    hammerIndex++;
+    
+    if (hammerIndex % HAMMER_SIZE == 0 || hammerIndex == HAMMER_BIT_COUNT) {
+      frameBitHammered = true;
+    }
   } else {
+    // stop TC7
     stopTimer(TC2, 1, TC7_IRQn);
+
+    // reset value
     CANdy_Write(resetValue);
 
     // turn off multiplexing
     PIOA->PIO_PDR = PIO_PA0A_CANTX0;
     PIOA->PIO_ODR = PIO_PA0A_CANTX0;
-
   }
 }
 

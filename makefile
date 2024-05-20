@@ -1,6 +1,6 @@
 .PHONY: sender receiver hammer monitor due_michican_defender_example due_attacker_example hammer2
 
-all: sender receiver hammer
+all: sender hammer2
 
 SENDER_ID   := .port.properties.serialNumber == "75932313638351300251"
 RECEIVER_ID := .port.properties.serialNumber == "85138313234351E09162" or .port.properties.pid == "0x003e"
