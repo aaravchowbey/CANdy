@@ -10,10 +10,11 @@
 #define SET_LED(state)                                                         \
   do {                                                                         \
     (state) ? (PIOB->PIO_SODR = PIO_PB27) : (PIOB->PIO_CODR = PIO_PB27);       \
+    (state) ? (PIOB->PIO_SODR = PIO_PB26) : (PIOB->PIO_CODR = PIO_PB26);       \
     ledState = state;                                                          \
   } while (0)
 
-#define ONE_BITS(x) ((1ULL << (x)) - 1)
+#define ONE_BITS(x) (((uint64_t)1 << (x)) - 1)
 #define BITS_AT_POS(queue, pos, num_bits)                                      \
   (queue[pos * SAMPLING_RATE / 64] &                                           \
    (ONE_BITS(num_bits * SAMPLING_RATE) << (SAMPLING_RATE * pos % 64)))
@@ -40,26 +41,32 @@ void TC3_Handler() {
 
   bool value = (PIOA->PIO_PDSR & PIO_PA1A_CANRX0) != 0;
 
-  bus_queue[2] = ((bus_queue[2] & ONE_BITS(63)) << 1) | ((bus_queue[1] & (1ULL << 63)) >> 63);
-  bus_queue[1] = ((bus_queue[1] & ONE_BITS(63)) << 1) | ((bus_queue[0] & (1ULL << 63)) >> 63);
+  bus_queue[2] = ((bus_queue[2] & ONE_BITS(63)) << 1) | ((bus_queue[1] & ((uint64_t)1 << 63)) >> 63);
+  bus_queue[1] = ((bus_queue[1] & ONE_BITS(63)) << 1) | ((bus_queue[0] & ((uint64_t)1 << 63)) >> 63);
   bus_queue[0] = ((bus_queue[0] & ONE_BITS(63)) << 1) | value;
 
-  if ((bus_queue[2] & ONE_BITS(22)) == ONE_BITS(22) && bus_queue[1] == UINT64_MAX && bus_queue[0] == (ONE_BITS(54) << 10)) {
+  if (!sof && (bus_queue[2] & ONE_BITS(22)) == ONE_BITS(22) && bus_queue[1] == UINT64_MAX && bus_queue[0] == (ONE_BITS(54) << 10)) {
     // check if 140 ones followed by 10 zeros is found in last 150 bits
     // ([2] has 22 ones, [1] has 64 ones, [0] has 54 ones & 10 zeros)
     sof = true;
-  }
+    frame_queue[0] = ONE_BITS(54) << 10;
+  } else if (sof) {
+    if ((frame_queue[2] & ((uint64_t)1 << 63)) == 0) {
+      sof = false;
+      return;
+    }
 
-  if (sof) {
     // if sof is true, continue until data bits in frame reached
     if (!(value == 0 && (frame_queue[0] & ONE_BITS(50)) == ONE_BITS(50) &&  // value is 1 and previous 50 samples are 0s (and is not in default state)
           frame_queue[0] != UINT64_MAX) &&
         !(value == 1 && (frame_queue[0] & ONE_BITS(50)) == 0)               // value is 0 and previous 50 samples are 1s
     ) {
       // if not stuff bit, add to frame_queue
-      frame_queue[2] = ((frame_queue[2] & ONE_BITS(63)) << 1) | ((frame_queue[1] & (1ULL << 63)) >> 63);
-      frame_queue[1] = ((frame_queue[1] & ONE_BITS(63)) << 1) | ((frame_queue[0] & (1ULL << 63)) >> 63);
-      frame_queue[0] = ((frame_queue[0] & ONE_BITS(63)) << 1) | value;
+      frame_queue[2] = ((frame_queue[2] & ONE_BITS(63)) << 1) | ((frame_queue[1] & ((uint64_t)1 << 63)) >> 63);
+      frame_queue[1] = ((frame_queue[1] & ONE_BITS(63)) << 1) | ((frame_queue[0] & ((uint64_t)1 << 63)) >> 63);
+
+      // FIX: requires explicit conversion to uint64_t for some reason; why?
+      frame_queue[0] = ((frame_queue[0] & ONE_BITS(63)) << 1) | ((uint64_t)(value ? 1 : 0));
     }
 
     if (
@@ -69,21 +76,41 @@ void TC3_Handler() {
         BITS_AT_POS(frame_queue, 5, 1) == 0 &&         // IDE
         BITS_AT_POS(frame_queue, 4, 1) == 0 &&         // reserved bit
         BITS_AT_POS(frame_queue, 0, 4) != 0            // DLC (must be > 0)
+        // (frame_queue[2] & (ONE_BITS(10) << 52)) == 0 &&
+        // (frame_queue[1] & ONE_BITS(6)) == 0 &&         // RTR (must be 0 for data frame) (first 6 samples)
+        // (frame_queue[0] & (ONE_BITS(4) << 60)) == 0 && //                                (last 4 samples)
+        // (frame_queue[0] & (ONE_BITS(10) << 50)) == 0 &&
+        // (frame_queue[0] & (ONE_BITS(10) << 40)) == 0 &&
+        // (frame_queue[0] & ONE_BITS(40)) != 0
     ) {
       frame_queue[2] = frame_queue[1] = frame_queue[0] = UINT64_MAX;
       sof = false;
+
       SET_LED(!ledState);
 
       CANdy_Hammer();
     }
   }
+  SET_LED(sof);
 }
 
 // starts hammering
 void CANdy_Hammer() {
   hammerIndex = 0;
 
-  // FIX: starts hammering in second data bit
+  if (hammerIndex < HAMMER_BIT_COUNT) {
+    // if bits left to hammer, setup hammering for one data bit
+    resetValue = (PIOA->PIO_PDSR & PIO_PA1A_CANRX0) != 0;
+    frameBitHammered = false;
+
+    // turn on multiplexing
+    PIOA->PIO_PER = PIO_PA0A_CANTX0;
+    PIOA->PIO_OER = PIO_PA0A_CANTX0;
+
+    // start TC7 to fire 5 times in a bit
+    startTimer(TC2, 1, TC7_IRQn, SPEED * 5);
+  }
+
   startTimer(TC2, 0, TC6_IRQn, SPEED);
 }
 
@@ -169,7 +196,7 @@ void setup() {
   // start serial port at 115200 bps
   Serial.begin(115200);
 
-  // CAN0 and CAN1 initialization, baudrate is 1Mb/s
+  // CAN0 and CAN1 initialization
   Can0.begin(SPEED);
   Can1.begin(SPEED);
 
@@ -182,7 +209,7 @@ void setup() {
   // set CAN_RX as input (Output Disable Register)
   PIOA->PIO_ODR = PIO_PA1A_CANRX0;
 
-  // disable pull-up on both pins (Pull Up Disable Register)
+  // disable pull-up on both pins (Pull-Up Disable Register)
   PIOA->PIO_PUDR = PIO_PA1A_CANRX0;
   PIOA->PIO_PUDR = PIO_PA0A_CANTX0;
 
@@ -192,6 +219,10 @@ void setup() {
   // enable control of LEDs
   PIOB->PIO_PER = PIO_PB27;
   PIOB->PIO_OER = PIO_PB27;
+
+  // enable control of digital pin 22
+  PIOB->PIO_PER = PIO_PB26;
+  PIOB->PIO_OER = PIO_PB26;
 
   SET_LED(true);
   delay(500);
