@@ -10,26 +10,26 @@ HAMMER_ID   := .port.properties.serialNumber == "75932313638351803271"
 sender:
 	@echo "\033[1mcompiling and uploading $@\033[0m"
 	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.[] | select($(SENDER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli compile $$FLAGS $@ && \
-	arduino-cli upload $$FLAGS $@
+	arduino-cli --no-color compile --warnings all $$FLAGS $@ && \
+	arduino-cli --no-color upload $$FLAGS $@
 
 receiver:
 	@echo "\033[1mcompiling and uploading $@\033[0m"
 	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.[] | select($(RECEIVER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli compile $$FLAGS $@ && \
-	arduino-cli upload $$FLAGS $@
+	arduino-cli --no-color compile --warnings all $$FLAGS $@ && \
+	arduino-cli --no-color upload $$FLAGS $@
 
 hammer:
 	@echo "\033[1mcompiling and uploading $@\033[0m"
 	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.[] | select($(HAMMER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli compile $$FLAGS $@ && \
-	arduino-cli upload $$FLAGS $@
+	arduino-cli --no-color compile --warnings all $$FLAGS $@ && \
+	arduino-cli --no-color upload $$FLAGS $@
 
 hammer2:
 	@echo "\033[1mcompiling and uploading $@\033[0m"
 	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.[] | select($(RECEIVER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli compile $$FLAGS $@ && \
-	arduino-cli upload $$FLAGS $@
+	arduino-cli --no-color compile --warnings all $$FLAGS $@ && \
+	arduino-cli --no-color upload $$FLAGS $@
 
 monitor:
 	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.[] | select(.port.properties.pid == "0x003e") | "-p \(.port.address)"'); \
@@ -38,11 +38,11 @@ monitor:
 due_attacker_example:
 	@echo "\033[1mcompiling and uploading $@\033[0m"
 	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.[] | select($(SENDER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli compile $$FLAGS $@ && \
-	arduino-cli upload $$FLAGS $@
+	arduino-cli --no-color compile --warnings all $$FLAGS $@ && \
+	arduino-cli --no-color upload $$FLAGS $@
 
 due_michican_defender_example:
 	@echo "\033[1mcompiling and uploading $@\033[0m"
 	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.[] | select($(RECEIVER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli compile $$FLAGS $@ && \
-	arduino-cli upload $$FLAGS $@
+	arduino-cli --no-color compile --warnings all $$FLAGS $@ && \
+	arduino-cli --no-color upload $$FLAGS $@
