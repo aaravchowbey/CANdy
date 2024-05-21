@@ -69,7 +69,7 @@ void TC3_Handler() {
         BITS_AT_POS(frame_queue, 4, 1) == 0 &&         // reserved bit
         BITS_AT_POS(frame_queue, 0, 4) != 0            // DLC (must be >0)
     ) {
-      frame_queue[2] = frame_queue[1] = frame_queue[0] = 0;
+      frame_queue[2] = frame_queue[1] = frame_queue[0] = UINT64_MAX;
       sof = false;
       LED_FLIP();
 
