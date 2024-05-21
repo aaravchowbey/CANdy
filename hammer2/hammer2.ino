@@ -12,9 +12,9 @@
 #define LED_LOW()  do { PIOB->PIO_CODR = PIO_PB27; ledState = false; } while(0)
 #define LED_FLIP() do { if (ledState) LED_LOW(); else LED_HIGH(); } while(0)
 
-#define ONE_BITS(x) ((1UL << (x)) - 1)
-#define BITS_AT_POS(queue, pos, num_bits)                                 \
-  (queue[pos * SAMPLING_RATE / 64] &                                      \
+#define ONE_BITS(x) ((1ULL << (x)) - 1)
+#define BITS_AT_POS(queue, pos, num_bits)                              \
+  (queue[pos * SAMPLING_RATE / 64] &                                   \
    (ONE_BITS(num_bits * SAMPLING_RATE) << (SAMPLING_RATE * pos % 64)))
 
 volatile bool ledState = false;
@@ -23,7 +23,7 @@ volatile bool sof = false;
 volatile bool resetValue = false;
 
 uint64_t bus_queue[3] = {UINT64_MAX, UINT64_MAX, UINT64_MAX};
-uint64_t frame_queue[3] = {0};
+uint64_t frame_queue[3] = {UINT64_MAX, UINT64_MAX, UINT64_MAX};
 
 // data bits to hammer
 const bool hammerData[HAMMER_BIT_COUNT] = {0, 1};
@@ -39,25 +39,26 @@ void TC3_Handler() {
 
   bool value = (PIOA->PIO_PDSR & PIO_PA1A_CANRX0) != 0;
 
-  bus_queue[2] = (bus_queue[2] << 1) | ((bus_queue[1] & (1UL << 63)) >> 63);
-  bus_queue[1] = (bus_queue[1] << 1) | ((bus_queue[0] & (1UL << 63)) >> 63);
-  bus_queue[0] = (bus_queue[0] << 1) | value;
+  bus_queue[2] = ((bus_queue[2] & ONE_BITS(63)) << 1) | ((bus_queue[1] & (1ULL << 63)) >> 63);
+  bus_queue[1] = ((bus_queue[1] & ONE_BITS(63)) << 1) | ((bus_queue[0] & (1ULL << 63)) >> 63);
+  bus_queue[0] = ((bus_queue[0] & ONE_BITS(63)) << 1) | value;
 
   if ((bus_queue[2] & ONE_BITS(22)) == ONE_BITS(22) && bus_queue[1] == UINT64_MAX && bus_queue[0] == (ONE_BITS(54) << 10)) { 
     // check if 140 ones followed by 10 zeros is found in last 150 bits
     // ([2] has 22 ones, [1] has 64 ones, [0] has 54 ones & 10 zeros)
-    LED_FLIP();
     sof = true;
-    // startTimer(TC2, 0, TC6_IRQn, (uint32_t)(1 / HAMMER_POINT));
   }
 
   if (sof) {
-    if (!(value == 0 && (bus_queue[0] & ONE_BITS(50)) == ONE_BITS(50)) &&
-        !(value == 1 && (bus_queue[0] & ONE_BITS(50)) == 0)) {
-      // if value is 0/1 and bus_queue has 50 1s/0s (5 bits), ignore
-      frame_queue[2] = (frame_queue[2] << 1) | ((frame_queue[1] & (1UL << 63)) >> 63);
-      frame_queue[1] = (frame_queue[1] << 1) | ((frame_queue[0] & (1UL << 63)) >> 63);
-      frame_queue[0] = (frame_queue[0] << 1) | value;
+    // if sof is true, continue until data bits in frame reached
+    if (!(value == 0 && (frame_queue[0] & ONE_BITS(50)) == ONE_BITS(50) &&  // value is 1 and previous 50 samples are 0s (and is not in default state)
+          frame_queue[0] != UINT64_MAX) &&
+        !(value == 1 && (frame_queue[0] & ONE_BITS(50)) == 0)               // value is 0 and previous 50 samples are 1s
+    ) {
+      // if not stuff bit, add to frame_queue
+      frame_queue[2] = ((frame_queue[2] & ONE_BITS(63)) << 1) | ((frame_queue[1] & (1ULL << 63)) >> 63);
+      frame_queue[1] = ((frame_queue[1] & ONE_BITS(63)) << 1) | ((frame_queue[0] & (1ULL << 63)) >> 63);
+      frame_queue[0] = ((frame_queue[0] & ONE_BITS(63)) << 1) | value;
     }
 
     if (
@@ -70,6 +71,7 @@ void TC3_Handler() {
     ) {
       frame_queue[2] = frame_queue[1] = frame_queue[0] = 0;
       sof = false;
+      LED_FLIP();
 
       CANdy_Hammer();
     }
