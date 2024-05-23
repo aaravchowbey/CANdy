@@ -42,6 +42,7 @@ void TC3_Handler() {
   bool value = (PIOA->PIO_PDSR & PIO_PA1A_CANRX0) != 0;
 
   if (!sof) {
+    // SET_LED(false);
     // if not sof, add to bus_queue
     bus_queue[0] = ((bus_queue[0] & 0x7FFFFFFFFFFFFFFF) << 1) | ((bus_queue[1] & 0x8000000000000000) >> 63);
     bus_queue[1] = ((bus_queue[1] & 0x7FFFFFFFFFFFFFFF) << 1) | value;
@@ -58,16 +59,22 @@ void TC3_Handler() {
     }
   } else {
     // else in frame
+
+    // FIX: below shows CANdy_Hammer does not work properly
+    // SET_LED(true);
+    // sof = false;
+    // CANdy_Hammer();
+    // return;
     // Serial.println((frame_queue[2] & 0x3FF) == 0x3FF);
 
     // FIX: below shows that value is broken!
-    if (frame_samples == 10) {
-      SET_LED(true);
-    } else if ((frame_queue[2] & 0x3FF) == 0x3FF) {
-      SET_LED(false);
-      sof = false;
-    }
-    return;
+    // if (frame_samples == 10) {
+    //   SET_LED(true);
+    // } else if ((frame_queue[2] & 0x3FF) == 0x3FF) {
+    //   SET_LED(false);
+    //   sof = false;
+    // }
+    // return;
     // Serial.println(value);
     // Serial.print((uint32_t)(frame_queue[2] & UINT32_MAX));
     // Serial.print(" ");
@@ -180,14 +187,17 @@ void CANdy_Hammer() {
 void TC6_Handler() {
   TC_GetStatus(TC2, 0);
 
+  SET_LED(true);
+
   if (hammerIndex < HAMMER_BIT_COUNT) {
+    Serial.println(hammerIndex);
     // if bits left to hammer, setup hammering for one data bit
     resetValue = (PIOA->PIO_PDSR & PIO_PA1A_CANRX0) != 0;
     frameBitHammered = false;
 
     // turn on multiplexing
-    PIOA->PIO_PER = PIO_PA0A_CANTX0;
-    PIOA->PIO_OER = PIO_PA0A_CANTX0;
+    // PIOA->PIO_PER = PIO_PA0A_CANTX0;
+    // PIOA->PIO_OER = PIO_PA0A_CANTX0;
 
     // start TC7 to fire 5 times in a bit
     startTimer(TC2, 1, TC7_IRQn, SPEED * 5);
@@ -218,17 +228,18 @@ void TC7_Handler() {
     CANdy_Write(resetValue);
 
     // turn off multiplexing
-    PIOA->PIO_PDR = PIO_PA0A_CANTX0;
-    PIOA->PIO_ODR = PIO_PA0A_CANTX0;
+    // PIOA->PIO_PDR = PIO_PA0A_CANTX0;
+    // PIOA->PIO_ODR = PIO_PA0A_CANTX0;
   }
 }
 
 void CANdy_Write(bool value) {
-  if (value) {
-    PIOA->PIO_SODR = PIO_PA0A_CANTX0;
-  } else {
-    PIOA->PIO_CODR = PIO_PA0A_CANTX0;
-  }
+  (value) ? (PIOB->PIO_SODR = PIO_PB26) : (PIOB->PIO_CODR = PIO_PB26);
+  // if (value) {
+  //   PIOA->PIO_SODR = PIO_PA0A_CANTX0;
+  // } else {
+  //   PIOA->PIO_CODR = PIO_PA0A_CANTX0;
+  // }
 }
 
 void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
