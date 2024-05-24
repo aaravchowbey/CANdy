@@ -5,7 +5,7 @@
 #define SPEED              CAN_BPS_50K
 #define HAMMER_BIT_COUNT   2           // total number of bits to hammer for message frame
 #define HAMMER_SIZE        2           // number of bits to hammer per data bit
-#define SAMPLING_RATE      10          // sampling rate of CAN bus
+#define SAMPLING_RATE      5           // sampling rate of CAN bus
 
 #define SET_LED(state)                                                         \
   do {                                                                         \
@@ -13,15 +13,17 @@
     (state) ? (PIOB->PIO_SODR = PIO_PB26) : (PIOB->PIO_CODR = PIO_PB26);       \
   } while (0)
 
-#define ONE_BITS(x) (((uint64_t)1 << (x)) - 1)
-#define BITS_AT_POS(queue, pos, num_bits)                                      \
-  (queue[pos * SAMPLING_RATE / 64] &                                           \
-   (ONE_BITS(num_bits * SAMPLING_RATE) << (SAMPLING_RATE * pos % 64)))
+#define CANdy_Write(value) \
+  do {                                                                         \
+    (value) ? (PIOB->PIO_SODR = PIO_PB26) : (PIOB->PIO_CODR = PIO_PB26);       \
+  } while (0)
+
+// PIO_PA0A_CANTX0
 
 volatile bool resetValue = false;
 
-uint64_t bus_queue[2] = {UINT64_MAX, UINT64_MAX};
-uint64_t frame_queue[3] = {UINT64_MAX, UINT64_MAX, UINT64_MAX};
+uint64_t bus_queue = UINT64_MAX;
+uint32_t frame_queue = UINT32_MAX;
 
 // data bits to hammer
 const bool hammerData[HAMMER_BIT_COUNT] = {0, 1};
@@ -33,87 +35,163 @@ volatile int hammerIndex = 0;
 volatile bool frameBitHammered = false;
 
 volatile bool sof = false;
-volatile uint8_t stuff_bit_counter = 10;
 volatile uint8_t frame_samples = 0;
 
 void TC3_Handler() {
   TC_GetStatus(TC1, 0);
 
-  bool value = (PIOA->PIO_PDSR & PIO_PA1A_CANRX0) != 0;
+  bool value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
 
+  // check if bus_queue contains sof
   if (!sof) {
-    // SET_LED(false);
     // if not sof, add to bus_queue
-    bus_queue[0] = ((bus_queue[0] & 0x7FFFFFFFFFFFFFFF) << 1) | ((bus_queue[1] & 0x8000000000000000) >> 63);
-    bus_queue[1] = ((bus_queue[1] & 0x7FFFFFFFFFFFFFFF) << 1) | value;
+    bus_queue = ((bus_queue & 0x7FFFFFFFFFFFFFFF) << 1) | value;
 
-    // check if bus_queue contains sof
-    if ((bus_queue[0] & 0x3FFFFFFFFFFF) == 0x3FFFFFFFFFFF &&
-        bus_queue[1] == 0xFFFFFFFFFFFFFC00) {
-      sof = true;
-      frame_queue[0] = UINT64_MAX;
-      frame_queue[1] = UINT64_MAX;
-      frame_queue[2] = 0xFFFFFFFFFFFFFC00;
-      frame_samples = 10;
-      stuff_bit_counter = 10;
-    }
+    sof = (bus_queue & 0x7FFFFFFFFFFFFF) == 0x7FFFFFFFFFFFE0;
   } else {
-    // else in frame
+    frame_queue = 0xFFFFFFFC | value;
+    frame_samples = 2;
+    hammerIndex = 0;
 
-    // FIX: below shows CANdy_Hammer does not work properly
+    stopTimer(TC1, 0, TC3_IRQn);
+    startTimer(TC1, 2, TC5_IRQn, SPEED);
+  }
+
+  //  else {
+  //   // else in frame
+  //   // check if frame_queue has a stuff bit
+  //   uint64_t result = frame_queue[1] & 0x1FFFFFF;
+  //   if (frame_samples >= 25 && ((!value && result == 0x1FFFFFF) || (value && result == 0))) {
+  //     stuff_bit_counter--;
+  //
+  //     if (stuff_bit_counter == 0) {
+  //       stuff_bit_counter = 5;
+  //       frame_samples = 0;
+  //     }
+  //   } else {
+  //     // if not stuff bit, add to frame_queue
+  //     frame_queue[0] = ((frame_queue[0] & 0x7FFFFFFFFFFFFFFF) << 1) |
+  //                      ((frame_queue[1] & 0x8000000000000000) >> 63);
+  //     frame_queue[1] = ((frame_queue[1] & 0x7FFFFFFFFFFFFFFF) << 1) |
+  //                      value;
+  //
+  //     frame_samples++;
+  //
+  //     if (frame_samples >= 95) {
+  //       sof = false;
+  //     } else if ((frame_queue[1] & 0xFFFFF) != 0 && // DLC (must be > 0)
+  //                (frame_queue[1] & 0x7FFF00000) == 0 && // reserved bit (must be 0)
+  //                (frame_queue[0] & 0x7C000000) == 0 // start of frame
+  //     ) {
+  //       sof = false;
+  //       CANdy_Hammer();
+  //     }
+  //   }
+  // }
+
+  // if (!sof) {
+  //   // SET_LED(false);
+  //   // if not sof, add to bus_queue
+  //   bus_queue[0] = ((bus_queue[0] & 0x7FFFFFFFFFFFFFFF) << 1) | ((bus_queue[1] & 0x8000000000000000) >> 63);
+  //   bus_queue[1] = ((bus_queue[1] & 0x7FFFFFFFFFFFFFFF) << 1) | value;
+  //
+  //   // check if bus_queue contains sof
+  //   if ((bus_queue[0] & 0x3FFFFFFFFFFF) == 0x3FFFFFFFFFFF &&
+  //       bus_queue[1] == 0xFFFFFFFFFFFFFC00) {
+  //     sof = true;
+  //     frame_queue[0] = UINT64_MAX;
+  //     frame_queue[1] = UINT64_MAX;
+  //     frame_queue[2] = 0xFFFFFFFFFFFFFC00;
+  //     frame_samples = 10;
+  //     stuff_bit_counter = 10;
+  //   }
+  // }
+  // } return; if(true) /*else*/ {
+  //   // else in frame
+  //
+  //   // FIX: below shows CANdy_Hammer does not work properly
+  //   // sof = false;
+  //   // CANdy_Hammer();
+  //   // return;
+  //   // Serial.println((frame_queue[2] & 0x3FF) == 0x3FF);
+  //
+  //   // FIX: below shows that value is broken!
+  //   // if (frame_samples == 10) {
+  //   //   SET_LED(true);
+  //   // } else if ((frame_queue[2] & 0x3FF) == 0x3FF) {
+  //   //   SET_LED(false);
+  //   //   sof = false;
+  //   // }
+  //   // return;
+  //   // Serial.println(value);
+  //   // Serial.print((uint32_t)(frame_queue[2] & UINT32_MAX));
+  //   // Serial.print(" ");
+  //   // Serial.print(frame_samples);
+  //   // Serial.print("\n");
+  //
+  //   // check if frame_queue has a stuff bit
+  //   uint64_t result = (frame_queue[2] & 0x3FFFFFFFFFFFF);
+  //   if (frame_samples >= 50 && ((!value && result == 0x3FFFFFFFFFFFF) || (value && result == 0))) {
+  //     // SET_LED(false);
+  //     stuff_bit_counter--;
+  //
+  //     if (stuff_bit_counter == 0) {
+  //       stuff_bit_counter = 10;
+  //       frame_samples = 0;
+  //     }
+  //   } else {
+  //     // if not stuff bit, add to frame_queue
+  //     frame_queue[0] = ((frame_queue[0] & 0x7FFFFFFFFFFFFFFF) << 1) |
+  //                      ((frame_queue[1] & 0x8000000000000000) >> 63);
+  //     frame_queue[1] = ((frame_queue[1] & 0x7FFFFFFFFFFFFFFF) << 1) |
+  //                      ((frame_queue[2] & 0x8000000000000000) >> 63);
+  //     frame_queue[2] = ((frame_queue[2] & 0x7FFFFFFFFFFFFFFF) << 1) | value;
+  //
+  //     frame_samples++;
+  //
+  //     if (frame_samples >= 190) {
+  //       sof = false;
+  //       // SET_LED(false);
+  //       // CANdy_Hammer();
+  //     } else if ((frame_queue[2] & 0xFFFFFFFFFF) != 0 && // DLC (must be > 0)
+  //                (frame_queue[2] & 0xFFFFFF0000000000) == 0 && // reserved bit (must be 0)
+  //                (frame_queue[1] & 0x3F) == 0 && // RTR (0 for data frames) (first 6 samples)
+  //                (frame_queue[0] & 0x3FF0000000000000) == 0 // start of frame
+  //     ) {
+  //       sof = false;
+  //       // SET_LED(false);
+  //       // CANdy_Hammer();
+  //     }
+  //   }
+  // }
+}
+
+void TC5_Handler() {
+  TC_GetStatus(TC1, 2);
+
+  bool value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
+
+  if (frame_samples >= 5 && ((value == 1 && (frame_queue & 0b11111) == 0b11111) || (value == 0 && (frame_queue & 0b11111) == 0))) {
     // SET_LED(true);
-    // sof = false;
-    // CANdy_Hammer();
-    // return;
-    // Serial.println((frame_queue[2] & 0x3FF) == 0x3FF);
+    frame_samples = 0;
+  } else {
+    // SET_LED(false);
+    // if not stuff bit, add to frame_queue
+    frame_queue = ((frame_queue & 0x7FFFFFFF) << 1) | value;
+    // SET_LED(frame_samples % 2 == 0);
 
-    // FIX: below shows that value is broken!
-    // if (frame_samples == 10) {
-    //   SET_LED(true);
-    // } else if ((frame_queue[2] & 0x3FF) == 0x3FF) {
-    //   SET_LED(false);
-    //   sof = false;
-    // }
-    // return;
-    // Serial.println(value);
-    // Serial.print((uint32_t)(frame_queue[2] & UINT32_MAX));
-    // Serial.print(" ");
-    // Serial.print(frame_samples);
-    // Serial.print("\n");
+    frame_samples++;
 
-    // check if frame_queue has a stuff bit
-    uint64_t result = (frame_queue[2] & 0x3FFFFFFFFFFFF);
-    if (frame_samples >= 50 && ((!value && result == 0x3FFFFFFFFFFFF) || (value && result == 0))) {
-      // SET_LED(false);
-      stuff_bit_counter--;
-
-      if (stuff_bit_counter == 0) {
-        stuff_bit_counter = 10;
-        frame_samples = 0;
-      }
-    } else {
-      // if not stuff bit, add to frame_queue
-      frame_queue[0] = ((frame_queue[0] & 0x7FFFFFFFFFFFFFFF) << 1) |
-                       ((frame_queue[1] & 0x8000000000000000) >> 63);
-      frame_queue[1] = ((frame_queue[1] & 0x7FFFFFFFFFFFFFFF) << 1) |
-                       ((frame_queue[2] & 0x8000000000000000) >> 63);
-      frame_queue[2] = ((frame_queue[2] & 0x7FFFFFFFFFFFFFFF) << 1) | value;
-
-      frame_samples++;
-
-      if (frame_samples >= 190) {
-        sof = false;
-        // SET_LED(false);
-        // CANdy_Hammer();
-      } else if ((frame_queue[2] & 0xFFFFFFFFFF) != 0 && // DLC (must be > 0)
-                 (frame_queue[2] & 0xFFFFFF0000000000) == 0 && // reserved bit (must be 0)
-                 (frame_queue[1] & 0x3F) == 0 && // RTR (0 for data frames) (first 6 samples)
-                 (frame_queue[0] & 0x3FF0000000000000) == 0 // start of frame
-      ) {
-        sof = false;
-        // SET_LED(false);
-        // CANdy_Hammer();
-      }
+    if (hammerIndex == 0 &&
+        (frame_queue & 0b1111) != 0 && // DLC (must be > 0)
+        (frame_queue & 0b1110000) == 0 && // reserved bit + IDE + RTR (must be 0)
+        (frame_queue & 0x40000) == 0 // start of frame
+    ) {
+      // stopTimer(TC1, 2, TC5_IRQn);
+      startTimer(TC2, 0, TC6_IRQn, SPEED);
+    } else if ((frame_queue & 0b11111111) == 0b11111111) {
+      startTimer(TC1, 0, TC3_IRQn, SPEED * 5);
+      stopTimer(TC1, 2, TC5_IRQn);
     }
   }
 }
@@ -176,23 +254,16 @@ void TC3_Handler() {
 //   SET_LED(sof);
 // }
 
-// starts hammering
-void CANdy_Hammer() {
-  hammerIndex = 0;
-
-  startTimer(TC2, 0, TC6_IRQn, SPEED);
-}
-
 // handles hammering bits for all data bits
 void TC6_Handler() {
   TC_GetStatus(TC2, 0);
 
-  SET_LED(true);
+  // SET_LED(true);
 
   if (hammerIndex < HAMMER_BIT_COUNT) {
-    Serial.println(hammerIndex);
+    // Serial.println(hammerIndex);
     // if bits left to hammer, setup hammering for one data bit
-    resetValue = (PIOA->PIO_PDSR & PIO_PA1A_CANRX0) != 0;
+    resetValue = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
     frameBitHammered = false;
 
     // turn on multiplexing
@@ -217,9 +288,7 @@ void TC7_Handler() {
 
     hammerIndex++;
 
-    if (hammerIndex % HAMMER_SIZE == 0 || hammerIndex == HAMMER_BIT_COUNT) {
-      frameBitHammered = true;
-    }
+    frameBitHammered = hammerIndex % HAMMER_SIZE == 0 || hammerIndex == HAMMER_BIT_COUNT;
   } else {
     // stop TC7
     stopTimer(TC2, 1, TC7_IRQn);
@@ -231,15 +300,6 @@ void TC7_Handler() {
     // PIOA->PIO_PDR = PIO_PA0A_CANTX0;
     // PIOA->PIO_ODR = PIO_PA0A_CANTX0;
   }
-}
-
-void CANdy_Write(bool value) {
-  (value) ? (PIOB->PIO_SODR = PIO_PB26) : (PIOB->PIO_CODR = PIO_PB26);
-  // if (value) {
-  //   PIOA->PIO_SODR = PIO_PA0A_CANTX0;
-  // } else {
-  //   PIOA->PIO_CODR = PIO_PA0A_CANTX0;
-  // }
 }
 
 void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
@@ -304,8 +364,11 @@ void setup() {
 
   Can0.watchFor();
 
-  startTimer(TC1, 0, TC3_IRQn, SPEED * SAMPLING_RATE);
+  startTimer(TC1, 0, TC3_IRQn, SPEED * 5);
 }
 
 void loop() {
+  // int i = micros();
+  // TC3_Handler();
+  // Serial.println(micros() - i);
 }
