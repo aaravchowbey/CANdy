@@ -37,27 +37,7 @@ volatile bool frameBitHammered = false;
 volatile bool sof = false;
 volatile uint8_t frame_samples = 1;
 
-void TC0_Handler() {
-  TC_GetStatus(TC0, 0);
-
-  bool value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
-
-  // check if bus_queue contains sof
-  if (!sof) {
-    // if not sof, add to bus_queue
-    bus_queue = ((bus_queue & 0x7FFFFFFFFFFFFFFF) << 1) | value;
-
-    sof = (bus_queue & 0x7FFFFFFFFFFFFF) == 0x7FFFFFFFFFFFE0;
-  } else {
-    frame_queue = 0xFFFFFFFC | value;
-    frame_samples = 2;
-    hammerIndex = 0;
-
-    startTimer(TC1, 2, TC5_IRQn, SPEED);
-    stopTimer(TC0, 0, TC0_IRQn);
-  }
-}
-
+// samples bits to determine when data bits start
 void TC5_Handler() {
   TC_GetStatus(TC1, 2);
 
@@ -80,7 +60,7 @@ void TC5_Handler() {
         (frame_queue & 0x40000) == 0 // start of frame
     ) {
       // if DLC complete, start hammering timer for incoming data bit
-      // startTimer(TC2, 0, TC6_IRQn, SPEED);
+      startTimer(TC2, 0, TC6_IRQn, SPEED);
     } else if (frame_samples >= 8 && (frame_queue & 0b11111111) == 0b11111111) {
       // if end of frame, stop frame timer and starting sof detection timer
       frame_queue = 0b11111111111111111111111111111110;
@@ -96,7 +76,6 @@ void TC6_Handler() {
   TC_GetStatus(TC2, 0);
 
   if (hammerIndex < HAMMER_BIT_COUNT) {
-    // Serial.println(hammerIndex);
     // if bits left to hammer, setup hammering for one data bit
     resetValue = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
     frameBitHammered = false;
@@ -137,62 +116,6 @@ void TC7_Handler() {
   }
 }
 
-// void CAN0_Handler() {
-//   Can0.interruptHandler();
-//   uint32_t status = CAN0->CAN_SR;
-//   // if (status & CAN_SR_RXRDY) {
-//   //   // Frame received successfully, possible EOF
-//   //   uint16_t timestamp = CAN0->CAN_TIM;
-//   //   // Process EOF
-//   //   Serial.print("EOF detected at: ");
-//   //   Serial.println(timestamp);
-//   // }
-//   // if (status & CAN_SR_TXOK) {
-//   //   // Frame transmitted successfully, possible SOF
-//   //   uint16_t timestamp = CAN0->CAN_TIM;
-//   //   // Process SOF
-//   //   Serial.print("SOF detected at: ");
-//   //   Serial.println(timestamp);
-//   // }
-// }
-//
-// void CAN1_Handler() {
-//   Can1.interruptHandler();
-//   uint32_t status = CAN1->CAN_SR;
-//   // if (status & CAN_SR_RXOK) {
-//   //   // Frame received successfully, possible EOF
-//   //   uint16_t timestamp = CAN1->CAN_TIM;
-//   //   // Process EOF
-//   //   Serial.print("EOF detected at: ");
-//   //   Serial.println(timestamp);
-//   // }
-//   // if (status & CAN_SR_TXOK) {
-//   //   // Frame transmitted successfully, possible SOF
-//   //   uint16_t timestamp = CAN1->CAN_TIM;
-//   //   // Process SOF
-//   //   Serial.print("SOF detected at: ");
-//   //   Serial.println(timestamp);
-//   // }
-// }
-
-// void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
-//   //Enable or disable write protect of PMC registers.
-//   pmc_set_writeprotect(false);
-//   //Enable the specified peripheral clock.
-//   pmc_enable_periph_clk((uint32_t)irq);
-//
-//   TC_Configure(tc, channel, TC_CMR_WAVE | TC_CMR_WAVSEL_UP_RC | TC_CMR_TCCLKS_TIMER_CLOCK4);
-//   uint32_t rc = VARIANT_MCK / 128 / frequency;
-//
-//   TC_SetRA(tc, channel, rc / 2);
-//   TC_SetRC(tc, channel, rc);
-//   TC_Start(tc, channel);
-//
-//   tc->TC_CHANNEL[channel].TC_IER = TC_IER_CPCS;
-//   tc->TC_CHANNEL[channel].TC_IDR = ~TC_IER_CPCS;
-//   NVIC_EnableIRQ(irq);
-// }
-//
 void stopTimer(Tc* tc, uint32_t channel, IRQn_Type irq) {
   NVIC_DisableIRQ(irq);
   TC_Stop(tc, channel);
@@ -202,15 +125,10 @@ void setup() {
   // start serial port at 115200 bps
   Serial.begin(115200);
 
-  // CAN0 and CAN1 initialization
+  // CAN0 initialization
   Can0.begin(SPEED);
-  Can1.begin(SPEED);
-
   Can0.enable_time_triggered_mode();
   Can0.set_timestamp_capture_point(0);
-
-  Can1.enable_time_triggered_mode();
-  Can1.set_timestamp_capture_point(1);
 
   // PIOA power ON
   PMC->PMC_PCER0 |= PMC_PCER0_PID11;
