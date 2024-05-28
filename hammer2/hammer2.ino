@@ -22,11 +22,10 @@
 
 volatile bool resetValue = false;
 
-volatile uint64_t bus_queue = UINT64_MAX;
 volatile uint32_t frame_queue = 0b11111111111111111111111111111110;
 
 // data bits to hammer
-const uint64_t hammerData = 0b01;
+const uint32_t hammerData = 0b01;
 
 // current index of hammerData
 volatile uint8_t hammerIndex = 0;
@@ -126,9 +125,10 @@ void setup() {
   Serial.begin(115200);
 
   // CAN0 initialization
-  Can0.begin(SPEED);
-  Can0.enable_time_triggered_mode();
   Can0.set_timestamp_capture_point(0);
+  // Can0.disable_time_triggered_mode();
+  Can0.enable_interrupt(CAN_SR_TSTP);
+  Can0.begin(SPEED);
 
   // PIOA power ON
   PMC->PMC_PCER0 |= PMC_PCER0_PID11;

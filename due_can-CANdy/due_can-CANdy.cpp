@@ -1100,6 +1100,7 @@ void CANRaw::interruptHandler() {
 	if (ul_status & CAN_SR_TOVF) { //timer overflow
 	}
 	if (ul_status & CAN_SR_TSTP) { //timestamp - start or end of frame
+		enable_interrupt(CAN_SR_TSTP);
 		startTimer(TC1, 2, TC5_IRQn, busSpeed);
 	}
 	if (ul_status & CAN_SR_CERR) { //CRC error in mailbox
