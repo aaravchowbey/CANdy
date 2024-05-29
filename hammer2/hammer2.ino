@@ -2,7 +2,7 @@
 
 #define SPEED CAN_BPS_50K
 
-#define HAMMER_BIT_COUNT 2  // total number of bits to hammer for message frame
+#define HAMMER_BIT_COUNT 4  // total number of bits to hammer for message frame
 #define HAMMER_SIZE 2       // number of bits to hammer per data bit
 #define SAMPLING_RATE 5     // sampling rate of CAN bus
 
@@ -23,67 +23,64 @@ volatile bool hammer_state = false;
 volatile bool resetValue = false;
 
 volatile uint32_t frame_queue = 0b11111111111111111111111111111110;
-volatile int frame_samples = 2;
+volatile uint8_t samples_after_stuff = 0;
+volatile uint8_t frame_samples = 0;
 
 // data bits to hammer
-const uint32_t hammerData = 0b01;
+const uint32_t hammer_data = 0b1111;
 
-// current index of hammerData
-volatile uint8_t hammerIndex = 0;
+// current index of hammer_data
+volatile uint8_t hammer_index = 0;
 
 // bit in frame has been completely hammered
 volatile bool frameBitHammered = false;
 
 void CAN0_Handler() {
   if (CAN0->CAN_SR & CAN_SR_TSTP) {
-    // fires at second frame bit at ~70%
-    bool value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
-    frame_queue = 0b11111111111111111111111111111100 | (value ? 1 : 0);
-    frame_samples = 2;
-
+    // fires on second frame bit at ~70%
     startTimer(TC0, 0, TC0_IRQn, SPEED * 1000);
+
+    frame_queue = 0b11111111111111111111111111111110;
+    samples_after_stuff = 1;
+    frame_samples = 1;
+    hammer_index = 0;
   }
 }
 
 // samples bits to determine when data bits start
 void TC0_Handler() {
-  TC_GetStatus(TC1, 0);
+  TC_GetStatus(TC0, 0);
 
-  bool value = (PIOA->PIO_PDSR & PIO_PA1A_CANRX0);
-  if (frame_samples >= 5 && ((value == 0 && (frame_queue & 0b11111) == 0b11111) || (value == 1 && (frame_queue & 0b11111) == 0))) {
+  bool value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
+
+  if (samples_after_stuff == 5 && ((value == 0 && (frame_queue & 0b11111) == 0b11111) || (value == 1 && (frame_queue & 0b11111) == 0))) {
     // if stuff bit, reset frame_samples
-    frame_samples = 0;
+    samples_after_stuff = 0;
   } else {
     // if not stuff bit, add to frame_queue
     frame_queue = ((frame_queue & 0x7FFFFFFF) << 1) | value;
+    samples_after_stuff++;
     frame_samples++;
 
-    // SET_LED(frame_samples % 2 == 1);
-
-    if (hammerIndex == 0 && (frame_queue & 0b1111) != 0 &&  // DLC (must be > 0)
-        (frame_queue & 0b1110000) == 0 &&                   // reserved bit + IDE + RTR (must be 0)
-        (frame_queue & 0x40000) == 0                        // start of frame
+    if (frame_samples == 20 &&             // check if frame_samples is greater than 19
+        (frame_queue & 0b1111) != 0 &&     // DLC (must be > 0)
+        (frame_queue & 0b1110000) == 0 &&  // reserved bit + IDE + RTR (must be 0)
+        (frame_queue & 0x40000) == 0       // start of frame
     ) {
-      // if DLC complete, start hammering timer for incoming data bit
-      // startTimer(TC1, 0, TC3_IRQn, SPEED * 1000);
-      CANdy_Write(hammer_state);
-      hammer_state = !hammer_state;
-    } else if (frame_samples >= 8 && (frame_queue & 0b11111111) == 0b11111111) {
-      // if end of frame, stop frame timer
+      // if DLC complete, start hammering timer for incoming data bit at ~0% mark
+      startTimer(TC1, 0, TC3_IRQn, (uint32_t)(SPEED * 1000 * 4.36));
 
-      frame_queue = UINT32_MAX;
-      frame_samples = 0;
+      // stops frame timer
       stopTimer(TC0, 0, TC0_IRQn);
     }
   }
 }
 
-// handles hammering bits for all data bits
+// runs hammering at ~20% for first data bit; helps synchronize later hammering
 void TC3_Handler() {
   TC_GetStatus(TC1, 0);
 
-  if (hammerIndex < HAMMER_BIT_COUNT) {
-    // if bits left to hammer, setup hammering for one data bit
+  if (hammer_index < HAMMER_BIT_COUNT) {
     resetValue = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
     frameBitHammered = false;
 
@@ -91,11 +88,36 @@ void TC3_Handler() {
     // PIOA->PIO_PER = PIO_PA0A_CANTX0;
     // PIOA->PIO_OER = PIO_PA0A_CANTX0;
 
-    // start TC7 to fire 5 times in a bit
+    // start TC7 to fire 5 times in a bit (~20% mark)
+    startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * 5);
+
+    // starts TC4 at next data bit (~0% mark)
+    startTimer(TC1, 1, TC4_IRQn, SPEED * 1000);
+  }
+
+  // stops first data bit hammering timer
+  stopTimer(TC1, 0, TC3_IRQn);
+}
+
+// handles hammering bits for all data bits
+void TC4_Handler() {
+  TC_GetStatus(TC1, 1);
+
+  if (hammer_index < HAMMER_BIT_COUNT) {
+    // if bits left to hammer, setup hammering for one data bit
+    resetValue = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
+    frameBitHammered = false;
+    CANdy_Write(false);
+
+    // turn on multiplexing
+    // PIOA->PIO_PER = PIO_PA0A_CANTX0;
+    // PIOA->PIO_OER = PIO_PA0A_CANTX0;
+
+    // start TC7 to fire 5 times in a bit (~20% mark)
     startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * 5);
   } else {
     // stop timer when no more bits to hammer
-    stopTimer(TC1, 0, TC3_IRQn);
+    stopTimer(TC1, 1, TC4_IRQn);
   }
 }
 
@@ -105,17 +127,17 @@ void TC6_Handler() {
 
   if (!frameBitHammered) {
     // if bit in frame has not been completely hammered, continue with hammering
-    CANdy_Write((hammerData & (1 << (HAMMER_SIZE - hammerIndex - 1))) >> hammerIndex);
+    CANdy_Write(((hammer_data >> hammer_index) & 1) == 1);
 
-    hammerIndex++;
+    hammer_index++;
 
-    frameBitHammered = hammerIndex % HAMMER_SIZE == 0 || hammerIndex == HAMMER_BIT_COUNT;
+    frameBitHammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
   } else {
-    // stop TC6
-    stopTimer(TC2, 0, TC6_IRQn);
-
     // reset value
     CANdy_Write(resetValue);
+
+    // stop TC6
+    stopTimer(TC2, 0, TC6_IRQn);
 
     // turn off multiplexing
     // PIOA->PIO_PDR = PIO_PA0A_CANTX0;
@@ -124,9 +146,9 @@ void TC6_Handler() {
 }
 
 void startTimer(Tc *tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
-  //Enable or disable write protect of PMC registers.
+  // enable or disable write protect of PMC registers.
   pmc_set_writeprotect(false);
-  //Enable the specified peripheral clock.
+  // enable the specified peripheral clock.
   pmc_enable_periph_clk((uint32_t)irq);
 
   TC_Configure(tc, channel, TC_CMR_WAVE | TC_CMR_WAVSEL_UP_RC | TC_CMR_TCCLKS_TIMER_CLOCK4);

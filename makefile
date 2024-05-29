@@ -36,4 +36,4 @@ due_michican_defender_example:
 monitor:
 	$(ARDUINO_CLI) monitor $(call get_board_flags, .port.properties.pid == "0x003e")
 
-.PHONY: all sender receiver hammer monitor due_michican_defender_example due_attacker_example hammer2
+.PHONY: all sender receiver hammer hammer2 due_attacker_example due_michican_defender_example monitor 
