@@ -4,6 +4,7 @@
 !/README.md
 
 !/makefile
+!/config.mk.example
 
 !/sender/
 !/sender/sender.ino
