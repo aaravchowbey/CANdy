@@ -1,43 +1,39 @@
-.PHONY: sender receiver hammer monitor due_michican_defender_example due_attacker_example hammer2 hammer2_debug
+PRINT_MESSAGE = @echo "\033[1mcompiling and uploading $@\033[0m"
+ARDUINO_CLI = arduino-cli --no-color
+COMPILE_FLAGS = --warnings all --upload # --export-binaries --optimize-for-debug to export
+define get_board_flags
+	$(shell arduino-cli board list --format=json | jq -r '.detected_ports | .[] | select($1) | "--fqbn \(.matching_boards | .[0] | .fqbn) --port \(.port.address)"')
+endef
 
 include config.mk
 
 all: sender hammer2
 
 sender:
-	@echo "\033[1mcompiling and uploading $@\033[0m"
-	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.detected_ports | .[] | select($(SENDER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli --no-color compile --warnings=all --upload $$FLAGS $@
+	$(PRINT_MESSAGE)
+	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(SENDER_ID)) $@
 
 receiver:
-	@echo "\033[1mcompiling and uploading $@\033[0m"
-	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.detected_ports | .[] | select($(RECEIVER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli --no-color compile --warnings=all --upload $$FLAGS $@
+	$(PRINT_MESSAGE)
+	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(RECEIVER_ID)) $@
 
 hammer:
-	@echo "\033[1mcompiling and uploading $@\033[0m"
-	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.detected_ports | .[] | select($(HAMMER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli --no-color compile --warnings=all --upload $$FLAGS $@
+	$(PRINT_MESSAGE)
+	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(HAMMER_ID)) $@
 
 hammer2:
-	@echo "\033[1mcompiling and uploading $@\033[0m"
-	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.detected_ports | .[] | select($(RECEIVER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli --no-color compile --warnings=all --upload $$FLAGS $@
-
-monitor:
-	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.detected_ports | .[] | select(.port.properties.pid == "0x003e") | "-p \(.port.address)"'); \
-	arduino-cli monitor $$FLAGS
+	$(PRINT_MESSAGE)
+	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(RECEIVER_ID)) $@
 
 due_attacker_example:
-	@echo "\033[1mcompiling and uploading $@\033[0m"
-	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.detected_ports | .[] | select($(SENDER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli --no-color compile --warnings all --upload $$FLAGS $@
+	$(PRINT_MESSAGE)
+	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(SENDER_ID)) $@
 
 due_michican_defender_example:
-	@echo "\033[1mcompiling and uploading $@\033[0m"
-	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.detected_ports | .[] | select($(RECEIVER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli --no-color compile --warnings all --upload $$FLAGS $@
+	$(PRINT_MESSAGE)
+	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(RECEIVER_ID)) $@
 
-hammer2_debug:
-	@FLAGS=$$(arduino-cli board list --format=json | jq -r '.detected_ports | .[] | select($(RECEIVER_ID)) | "-b \(.matching_boards | .[0] | .fqbn) -p \(.port.address)"'); \
-	arduino-cli --no-color compile --warnings=all --export-binaries --optimize-for-debug $$FLAGS hammer2
+monitor:
+	$(ARDUINO_CLI) monitor $(call get_board_flags, .port.properties.pid == "0x003e")
+
+.PHONY: all sender receiver hammer monitor due_michican_defender_example due_attacker_example hammer2
