@@ -4,7 +4,6 @@
 
 #define HAMMER_BIT_COUNT 4  // total number of bits to hammer for message frame
 #define HAMMER_SIZE 2       // number of bits to hammer per data bit
-#define SAMPLING_RATE 5     // sampling rate of CAN bus
 
 #define SET_LED(state) \
   do { \
@@ -22,12 +21,11 @@ volatile bool hammer_state = false;
 
 volatile bool resetValue = false;
 
-volatile uint32_t frame_queue = 0b11111111111111111111111111111110;
-volatile uint8_t samples_after_stuff = 0;
-volatile uint8_t frame_samples = 0;
+volatile uint32_t frame_queue;
+volatile uint8_t bits_after_prev_stuff, frame_bits;
 
 // data bits to hammer
-const uint32_t hammer_data = 0b1111;
+const uint32_t hammer_data = 0b1110101111;
 
 // current index of hammer_data
 volatile uint8_t hammer_index = 0;
@@ -36,13 +34,18 @@ volatile uint8_t hammer_index = 0;
 volatile bool frameBitHammered = false;
 
 void CAN0_Handler() {
+  // runs on second frame bit at ~70%
   if (CAN0->CAN_SR & CAN_SR_TSTP) {
-    // fires on second frame bit at ~70%
+    // fires on third frame bit at ~70%
     startTimer(TC0, 0, TC0_IRQn, SPEED * 1000);
 
-    frame_queue = 0b11111111111111111111111111111110;
-    samples_after_stuff = 1;
-    frame_samples = 1;
+    // set frame_queue
+    bool value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
+    frame_queue = 0b11111111111111111111111111111100 | value;
+
+    // reset values
+    bits_after_prev_stuff = 2;
+    frame_bits = 2;
     hammer_index = 0;
   }
 }
@@ -53,22 +56,26 @@ void TC0_Handler() {
 
   bool value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
 
-  if (samples_after_stuff == 5 && ((value == 0 && (frame_queue & 0b11111) == 0b11111) || (value == 1 && (frame_queue & 0b11111) == 0))) {
+  if (bits_after_prev_stuff >= 5 && ((value == 0 && (frame_queue & 0b11111) == 0b11111) || (value == 1 && (frame_queue & 0b11111) == 0))) {
     // if stuff bit, reset frame_samples
-    samples_after_stuff = 0;
+    bits_after_prev_stuff = 0;
   } else {
     // if not stuff bit, add to frame_queue
     frame_queue = ((frame_queue & 0x7FFFFFFF) << 1) | value;
-    samples_after_stuff++;
-    frame_samples++;
 
-    if (frame_samples == 20 &&             // check if frame_samples is greater than 19
-        (frame_queue & 0b1111) != 0 &&     // DLC (must be > 0)
-        (frame_queue & 0b1110000) == 0 &&  // reserved bit + IDE + RTR (must be 0)
-        (frame_queue & 0x40000) == 0       // start of frame
-    ) {
-      // if DLC complete, start hammering timer for incoming data bit at ~0% mark
-      startTimer(TC1, 0, TC3_IRQn, (uint32_t)(SPEED * 1000 * 4.36));
+    // increment counters
+    bits_after_prev_stuff++;
+    frame_bits++;
+
+    if (frame_bits == 19) {
+      // if 19 bits sent, check if correct and start hammering
+      if ((frame_queue & 0b1111) != 0 &&     // DLC (must be > 0)
+          (frame_queue & 0b1110000) == 0 &&  // reserved bit + IDE + RTR (must be 0)
+          (frame_queue & 0x40000) == 0       // start of frame
+      ) {
+        // hammer_data = get_hmac((frame_queue & 0x3FF80) >> 7);
+        startTimer(TC1, 0, TC3_IRQn, (uint32_t)(SPEED * 1000 * 3.333));
+      }
 
       // stops frame timer
       stopTimer(TC0, 0, TC0_IRQn);
@@ -81,18 +88,18 @@ void TC3_Handler() {
   TC_GetStatus(TC1, 0);
 
   if (hammer_index < HAMMER_BIT_COUNT) {
-    resetValue = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
-    frameBitHammered = false;
+    // starts TC4 at next data bit (~0% mark)
+    startTimer(TC1, 1, TC4_IRQn, SPEED * 1000);
 
     // turn on multiplexing
     // PIOA->PIO_PER = PIO_PA0A_CANTX0;
     // PIOA->PIO_OER = PIO_PA0A_CANTX0;
 
+    resetValue = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
+    frameBitHammered = false;
+
     // start TC7 to fire 5 times in a bit (~20% mark)
     startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * 5);
-
-    // starts TC4 at next data bit (~0% mark)
-    startTimer(TC1, 1, TC4_IRQn, SPEED * 1000);
   }
 
   // stops first data bit hammering timer
@@ -107,7 +114,6 @@ void TC4_Handler() {
     // if bits left to hammer, setup hammering for one data bit
     resetValue = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
     frameBitHammered = false;
-    CANdy_Write(false);
 
     // turn on multiplexing
     // PIOA->PIO_PER = PIO_PA0A_CANTX0;
@@ -172,19 +178,6 @@ void setup() {
   // start serial port at 115200 bps
   Serial.begin(115200);
 
-  // PIOA power ON
-  PMC->PMC_PCER0 |= PMC_PCER0_PID11;
-
-  // multiplex CAN_RX to GPIO (Peripheral Enable Register)
-  PIOA->PIO_PER = PIO_PA1A_CANRX0;
-
-  // set CAN_RX as input (Output Disable Register)
-  PIOA->PIO_ODR = PIO_PA1A_CANRX0;
-
-  // disable pull-up on both pins (Pull-Up Disable Register)
-  PIOA->PIO_PUDR = PIO_PA1A_CANRX0;
-  PIOA->PIO_PUDR = PIO_PA0A_CANTX0;
-
   // PIOB power ON
   PMC->PMC_PCER0 |= PMC_PCER0_PID12;
 
@@ -195,11 +188,6 @@ void setup() {
   // enable control of digital pin 22
   PIOB->PIO_PER = PIO_PB26;
   PIOB->PIO_OER = PIO_PB26;
-
-  SET_LED(true);
-  delay(500);
-  SET_LED(false);
-  delay(1000);
 
   // initialize CAN0
   pmc_enable_periph_clk(ID_CAN0);
@@ -212,6 +200,19 @@ void setup() {
 
   // enable CAN0 interrupt handler
   NVIC_EnableIRQ(CAN0_IRQn);
+
+  // PIOA power ON
+  PMC->PMC_PCER0 |= PMC_PCER0_PID11;
+
+  // multiplex CAN_RX to GPIO (Peripheral Enable Register)
+  PIOA->PIO_PER = PIO_PA1A_CANRX0;
+
+  // set CAN_RX as input (Output Disable Register)
+  PIOA->PIO_ODR = PIO_PA1A_CANRX0;
+
+  // disable pull-up on both pins (Pull-Up Disable Register)
+  PIOA->PIO_PUDR = PIO_PA1A_CANRX0;
+  PIOA->PIO_PUDR = PIO_PA0A_CANTX0;
 }
 
 void loop() {
