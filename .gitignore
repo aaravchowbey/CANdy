@@ -1,6 +1,10 @@
 *
 !/.gitignore
 
+!/.github/
+!/.github/workflows/
+!/.github/workflows/arduino.yml
+
 !/README.md
 
 !/makefile
@@ -14,7 +18,3 @@
 !/hammer/hammer.ino
 !/hammer2/
 !/hammer2/hammer2.ino
-
-!/due_can-CANdy/
-!/due_can-CANdy/due_can-CANdy.h
-!/due_can-CANdy/due_can-CANdy.cpp
