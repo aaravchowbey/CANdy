@@ -10,6 +10,7 @@ jobs:
           libraries: |
             - name: due_can
           enable-warnings-report: true
+          enable-deltas-report: true
           sketch-paths: |
             - sender
             - hammer2
