@@ -10,7 +10,7 @@ jobs:
           libraries: |
             - name: due_can
           enable-warnings-report: true
-          sketch-paths:
+          sketch-paths: |
             - sender
             - hammer2
       - uses: actions/upload-artifact@v4
