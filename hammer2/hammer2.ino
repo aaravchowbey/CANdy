@@ -23,7 +23,7 @@ volatile bool hammer_state = false;
 
 volatile bool resetValue = false;
 
-volatile uint32_t frame_queue;
+volatile uint8_t frame_queue;
 volatile uint8_t bits_after_prev_stuff, frame_bits;
 
 // data bits to hammer
@@ -37,9 +37,11 @@ volatile uint8_t hammer_index = 0;
 volatile bool frameBitHammered = false;
 
 union {
-  uint16_t val;
-  uint8_t arr[2];
-} frame_id;
+  volatile uint64_t val;
+  uint8_t arr[8];
+} frame_data;
+
+volatile uint8_t data_length = 0;
 
 void CAN0_Handler() {
   // runs on second frame bit at ~70%
@@ -69,27 +71,32 @@ void TC0_Handler() {
     bits_after_prev_stuff = 0;
   } else {
     // if not stuff bit, add to frame_queue
-    frame_queue = ((frame_queue & 0x7FFFFFFF) << 1) | value;
+    frame_queue = ((frame_queue & 0b1111111) << 1) | value;
 
     // increment counters
     bits_after_prev_stuff++;
     frame_bits++;
 
-    if (frame_bits == 19) {
-      // if 19 bits sent, check if correct and start hammering
-      if ((frame_queue & 0b1111) != 0 &&     // DLC (must be > 0)
-          (frame_queue & 0b1110000) == 0 &&  // reserved bit + IDE + RTR (must be 0)
-          (frame_queue & 0x40000) == 0       // start of frame
-      ) {
-        // hammer_data = get_hmac((frame_queue & 0x3FF80) >> 7);
+    if (frame_bits == 15 && (value & 0b111) != 0) {
+      stopTimer(TC0, 0, TC0_IRQn);
+    } else if (frame_bits == 19) {
+      if ((frame_queue & 0b1111) != 0) {
+        data_length = frame_queue & 0b1111;
+        frame_data.val = 0;
+      } else {
+        data_length = 0;
+        stopTimer(TC0, 0, TC0_IRQn);
+      }
+    } else if (data_length != 0 && frame_bits > 19 && frame_bits <= 19 + data_length * 8) {
+      frame_data.val = (frame_data.val << 1) | value;
+
+      if (frame_bits == 19 + data_length * 8) {
+        hammer_data[0] = 4;
+        // hmac_sha256(key, sizeof(key) - 1, frame_data.arr, data_length, hammer_data, 32);
         startTimer(TC1, 0, TC3_IRQn, (uint32_t)(SPEED * 1000 * 3.333));
 
-        frame_id.val = (uint16_t)((frame_queue & 0x3FF80) >> 7);
-        hmac_sha256(key, 16, frame_id.arr, 2, hammer_data, 32);
+        stopTimer(TC0, 0, TC0_IRQn);
       }
-
-      // stops frame timer
-      stopTimer(TC0, 0, TC0_IRQn);
     }
   }
 }
