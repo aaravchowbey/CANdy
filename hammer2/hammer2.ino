@@ -1,3 +1,5 @@
+#include <hmac_sha256.h>
+
 #define Serial SerialUSB
 
 #define SPEED CAN_BPS_50K
@@ -25,13 +27,19 @@ volatile uint32_t frame_queue;
 volatile uint8_t bits_after_prev_stuff, frame_bits;
 
 // data bits to hammer
-const uint32_t hammer_data = 0b1110101111;
+uint8_t hammer_data[32] = { 0b01010101, 0, 0, 0, 0 };
+const char key[] = "super-secret-key";
 
 // current index of hammer_data
 volatile uint8_t hammer_index = 0;
 
 // bit in frame has been completely hammered
 volatile bool frameBitHammered = false;
+
+union {
+  uint16_t val;
+  uint8_t arr[2];
+} frame_id;
 
 void CAN0_Handler() {
   // runs on second frame bit at ~70%
@@ -75,6 +83,9 @@ void TC0_Handler() {
       ) {
         // hammer_data = get_hmac((frame_queue & 0x3FF80) >> 7);
         startTimer(TC1, 0, TC3_IRQn, (uint32_t)(SPEED * 1000 * 3.333));
+
+        frame_id.val = (uint16_t)((frame_queue & 0x3FF80) >> 7);
+        hmac_sha256(key, 16, frame_id.arr, 2, hammer_data, 32);
       }
 
       // stops frame timer
@@ -133,7 +144,7 @@ void TC6_Handler() {
 
   if (!frameBitHammered) {
     // if bit in frame has not been completely hammered, continue with hammering
-    CANdy_Write(((hammer_data >> hammer_index) & 1) == 1);
+    CANdy_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
 
     hammer_index++;
 
