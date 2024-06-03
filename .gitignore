@@ -18,3 +18,9 @@
 !/hammer/hammer.ino
 !/hammer2/
 !/hammer2/hammer2.ino
+!/hammer-integrated/
+!/hammer-integrated/hammer-integrated.ino
+
+!/due_can-CANdy/
+!/due_can-CANdy/due_can-CANdy.h
+!/due_can-CANdy/due_can-CANdy.cpp

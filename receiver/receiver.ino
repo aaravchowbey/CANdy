@@ -19,8 +19,8 @@ void setup()
   Serial.begin(115200);
   
   // Initialize CAN0 and CAN1, Set the proper baud rates here
-  Can0.begin(CAN_BPS_250K);
-  Can1.begin(CAN_BPS_250K);
+  Can0.begin(CAN_BPS_50K);
+  // Can1.begin(CAN_BPS_250K);
   
   //By default there are 7 mailboxes for each device that are RX boxes
   //This sets each mailbox to have an open filter that will accept extended
@@ -28,13 +28,13 @@ void setup()
   int filter;
   //extended
   for (filter = 0; filter < 3; filter++) {
-	Can0.setRXFilter(filter, 0, 0, true);
-	Can1.setRXFilter(filter, 0, 0, true);
+    Can0.setRXFilter(filter, 0, 0, true);
+    // Can1.setRXFilter(filter, 0, 0, true);
   }  
   //standard
   for (int filter = 3; filter < 7; filter++) {
-	Can0.setRXFilter(filter, 0, 0, false);
-	Can1.setRXFilter(filter, 0, 0, false);
+    Can0.setRXFilter(filter, 0, 0, false);
+    // Can1.setRXFilter(filter, 0, 0, false);
   }  
   
 }
@@ -58,11 +58,11 @@ void loop(){
   CAN_FRAME incoming;
 
   if (Can0.available() > 0) {
-	Can0.read(incoming); 
-	printFrame(incoming);
+    Can0.read(incoming); 
+    printFrame(incoming);
   }
-  if (Can1.available() > 0) {
-	Can1.read(incoming); 
-	printFrame(incoming);
-  }
+  // if (Can1.available() > 0) {
+  //   Can1.read(incoming); 
+  //   printFrame(incoming);
+  // }
 }

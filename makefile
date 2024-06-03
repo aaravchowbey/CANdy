@@ -25,6 +25,10 @@ hammer2:
 	$(PRINT_MESSAGE)
 	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(RECEIVER)) $@
 
+hammer-integrated:
+	$(PRINT_MESSAGE)
+	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(SENDER)) $@
+
 due_attacker_example:
 	$(PRINT_MESSAGE)
 	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(SENDER)) $@
@@ -36,4 +40,4 @@ due_michican_defender_example:
 monitor:
 	$(ARDUINO_CLI) monitor $(call get_board_flags, .port.properties.pid == "0x003e")
 
-.PHONY: all sender receiver hammer hammer2 due_attacker_example due_michican_defender_example monitor 
+.PHONY: all sender receiver hammer hammer2 hammer-integrated due_attacker_example due_michican_defender_example monitor
