@@ -3,7 +3,7 @@
 #define HAMMER_BIT_COUNT 5  // total number of bits to hammer for message frame
 #define HAMMER_SIZE 1       // number of bits to hammer per data bit
 
-#define SPEED 50
+#define SPEED CAN_BPS_50K
 
 #define CANdy_Write(value) \
   do { \
@@ -306,7 +306,6 @@ void sendFrame() {
   for (int i = 0; i < 8; i++) {
     if (((CAN0->CAN_MB[i].CAN_MMR >> 24) & 7) == CAN_MB_TX_MODE) {  //is this mailbox set up as a TX box?
       if (CAN0->CAN_MB[i].CAN_MSR & CAN_MSR_MRDY) {                 //is it also available (not sending anything?)
-
         // set id to outgoing frame's id
         CAN0->CAN_MB[i].CAN_MID = CAN_MID_MIDvA(outgoing.id);
 
@@ -322,9 +321,21 @@ void sendFrame() {
 
         can_enable_interrupt(CAN0, 0x01u << i);  //enable the TX interrupt for this box
         can_global_send_transfer_cmd(CAN0, (0x1u << i));
-	      // startTimer(TC1, 0, TC3_IRQn, 2310);
 
-        return;  //we've sent it. mission accomplished.
+        uint8_t total_bits = 19;
+        uint32_t frame_head = outgoing.length | (uint32_t)(outgoing.id << 7);  // 0b 0 ID 000 DLC
+
+        for (int8_t i = 14; i >= 0; i--) {
+          if ((frame_head & (0b11111 << i)) == 0) {
+            total_bits++;
+            i -= 4;
+          }
+        }
+
+        startTimer(TC1, 0, TC3_IRQn, (uint32_t)(SPEED * 1000 / (float)total_bits) - 60);
+
+        // message sent
+        return;
       }
     }
   }
