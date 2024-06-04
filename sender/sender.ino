@@ -1,60 +1,16 @@
-#include "variant.h"
 #include <due_can.h>
 
 #define Serial SerialUSB
-#define HAMMER_POINT 85e-6
 #define SPEED CAN_BPS_50K
 
-const int hammerSize = 4;
-const int hammerBits[hammerSize] = {1, 1, 1, 1};
-int hammerIndex = 0;
-
-volatile int a = 0;
-static unsigned long lastTime = 0;
+static uint32_t lastTime = 0;
 
 void setup() {
   Serial.begin(115200);
   pinMode(LED_BUILTIN, OUTPUT);
 
   Can0.begin(SPEED);
-
-  PMC->PMC_PCER0 |= PMC_PCER0_PID11; // PIOA power ON
-
-  // set CAN_RX as input (Output Disable Register) and
-  PIOA->PIO_PER = PIO_PA1A_CANRX0;
-  PIOA->PIO_ODR = PIO_PA1A_CANRX0;
-
-  PIOA->PIO_PDR = PIO_PA0A_CANTX0; // unable to send data w/ PER so changed to PDR (2024-03-13)
-  PIOA->PIO_OER = PIO_PA0A_CANTX0;
-
-  // disable pull-up on both pins (Pull Up Disable Register)
-  PIOA->PIO_PUDR = PIO_PA1A_CANRX0;
-  PIOA->PIO_PUDR = PIO_PA0A_CANTX0;
-
-  digitalWrite(LED_BUILTIN, HIGH);
-  delay(500);
-  digitalWrite(LED_BUILTIN, LOW);
-  delay(1000);
-
   Can0.watchFor();
-}
-
-void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) { //  DO NOT TOUCH
-  //Enable or disable write protect of PMC registers.
-  pmc_set_writeprotect(false);
-  //Enable the specified peripheral clock.
-  pmc_enable_periph_clk((uint32_t)irq);
-
-  TC_Configure(tc, channel, TC_CMR_WAVE | TC_CMR_WAVSEL_UP_RC | TC_CMR_TCCLKS_TIMER_CLOCK4);
-  uint32_t rc = VARIANT_MCK / 128 / frequency;
-
-  TC_SetRA(tc, channel, rc / 2);
-  TC_SetRC(tc, channel, rc);
-  TC_Start(tc, channel);
-
-  tc->TC_CHANNEL[channel].TC_IER = TC_IER_CPCS;
-  tc->TC_CHANNEL[channel].TC_IDR = ~TC_IER_CPCS;
-  NVIC_EnableIRQ(irq);
 }
 
 void sendData(const uint8_t* data, const int dataLength) {
@@ -69,17 +25,15 @@ void sendData(const uint8_t* data, const int dataLength) {
   }
 
   if (Can0.sendFrame(outgoing)) {
-    // if frame successfully sent, flip LED state
+    // if frame successfully sent, toggle LED
     digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
   }
 }
 
 void loop() {
   const int dataLength = 8;
-  // const uint8_t data[dataLength] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77};
   const uint8_t data[dataLength] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-  // NOTE: avoid use of delay since it does not work well w/ interrupts
   if (millis() - lastTime > 1000) {
     lastTime = millis();
     sendData(data, dataLength);

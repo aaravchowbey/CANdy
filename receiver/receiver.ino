@@ -1,68 +1,40 @@
-// Arduino Due - Displays all traffic found on either canbus port
-// By Thibaut Viard/Wilfredo Molina/Collin Kidder 2013-2014
-
-// Required libraries
-#include "variant.h"
 #include <due_can.h>
 
-//Leave defined if you use native port, comment if using programming port
-//This sketch could provide a lot of traffic so it might be best to use the
-//native port
 #define Serial SerialUSB
+#define SPEED CAN_BPS_50K
 
-void setup()
-{
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN,  LOW);
-  delay(500);
-  digitalWrite(LED_BUILTIN, HIGH);
+void setup() {
   Serial.begin(115200);
-  
-  // Initialize CAN0 and CAN1, Set the proper baud rates here
+  pinMode(LED_BUILTIN, OUTPUT);
+
   Can0.begin(CAN_BPS_50K);
-  // Can1.begin(CAN_BPS_250K);
-  
-  //By default there are 7 mailboxes for each device that are RX boxes
-  //This sets each mailbox to have an open filter that will accept extended
-  //or standard frames
-  int filter;
-  //extended
-  for (filter = 0; filter < 3; filter++) {
-    Can0.setRXFilter(filter, 0, 0, true);
-    // Can1.setRXFilter(filter, 0, 0, true);
-  }  
-  //standard
   for (int filter = 3; filter < 7; filter++) {
+    // receives standard frames
     Can0.setRXFilter(filter, 0, 0, false);
-    // Can1.setRXFilter(filter, 0, 0, false);
-  }  
-  
+  }
 }
 
 void printFrame(CAN_FRAME &frame) {
-   Serial.print("ID: 0x");
-   Serial.print(frame.id, HEX);
-   Serial.print(" Len: ");
-   Serial.print(frame.length);
-   Serial.print(" Data: 0x");
-   for (int count = 0; count < frame.length; count++) {
-       Serial.print(frame.data.bytes[count], HEX);
-       Serial.print(" ");
-   }
-   Serial.print("\r\n");
-   
+  Serial.print("ID: 0x");
+  Serial.print(frame.id, HEX);
+  Serial.print(" Len: ");
+  Serial.print(frame.length);
+  Serial.print(" Data: 0x");
+  for (int count = 0; count < frame.length; count++) {
+    Serial.print(frame.data.bytes[count], HEX);
+    Serial.print(" ");
+  }
+  Serial.print("\r\n");
+
+  // if frame received, toggle LED
   digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
 }
 
-void loop(){
+void loop() {
   CAN_FRAME incoming;
 
   if (Can0.available() > 0) {
-    Can0.read(incoming); 
+    Can0.read(incoming);
     printFrame(incoming);
   }
-  // if (Can1.available() > 0) {
-  //   Can1.read(incoming); 
-  //   printFrame(incoming);
-  // }
 }
