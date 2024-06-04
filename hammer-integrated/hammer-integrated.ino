@@ -160,7 +160,7 @@ void TC3_Handler() {
     reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
     frame_bit_hammered = false;
 
-    // start TC7 to fire 5 times in a bit (~20% mark)
+    // start TC6 to fire at ~20% mark
     startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * 5);
   }
 
@@ -168,19 +168,15 @@ void TC3_Handler() {
   stopTimer(TC1, 0, TC3_IRQn);
 }
 
-// handles hammering bits for all data bits
+// handles hammering bits for all other data bits
 void TC4_Handler() {
   TC_GetStatus(TC1, 1);
 
   if (hammer_index < HAMMER_BIT_COUNT) {
     // if bits left to hammer, setup hammering for one data bit
     reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
-    frame_bit_hammered = false;
 
-    // turn on multiplexing
-    PIOA->PIO_PER = PIO_PA0A_CANTX0;
-
-    // start TC7 to fire 5 times in a bit (~20% mark)
+    // start TC6 to fire at ~20% mark
     startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * 5);
   } else {
     // stop timer when no more bits to hammer
@@ -188,14 +184,31 @@ void TC4_Handler() {
   }
 }
 
-// handles hammering bits for one data bit
+// handles hammering one bit and sets up hammering for one data bit
 void TC6_Handler() {
   TC_GetStatus(TC2, 0);
+
+  // turn on multiplexing
+  PIOA->PIO_PER = PIO_PA0A_CANTX0;
+
+  // write first hammered bit for data bit
+  CANdy_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
+  hammer_index++;
+
+  frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
+
+  // start timer to hammer remaining bits for data bit
+  startTimer(TC2, 1, TC7_IRQn, SPEED * 1000 * 10);
+
+  stopTimer(TC2, 0, TC6_IRQn);
+}
+
+void TC7_Handler() {
+  TC_GetStatus(TC2, 1);
 
   if (!frame_bit_hammered) {
     // if bit in frame has not been completely hammered, continue with hammering
     CANdy_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
-
     hammer_index++;
 
     frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
@@ -203,8 +216,8 @@ void TC6_Handler() {
     // reset value
     CANdy_Write(reset_value);
 
-    // stop TC6
-    stopTimer(TC2, 0, TC6_IRQn);
+    // stop TC7 (stops hammering for the data bit)
+    stopTimer(TC2, 1, TC7_IRQn);
 
     // turn off multiplexing
     PIOA->PIO_PDR = PIO_PA0A_CANTX0;
@@ -322,9 +335,9 @@ void sendFrame() {
         CAN0->CAN_MB[i].CAN_MDL = (uint32_t)(outgoing.data.value & 0xffffffff);
         CAN0->CAN_MB[i].CAN_MDH = (uint32_t)(outgoing.data.value >> 32);
 
-
+        // calculate bits in first part of frame
         total_bits = 17;
-        uint32_t frame_head = outgoing.length | (uint32_t)(outgoing.id << 7);  // 0b 0 ID 000 DLC
+        uint32_t frame_head = outgoing.length | (uint32_t)(outgoing.id << 7);  // 0b0[ID]000[DLC]
 
         for (int8_t i = 14; i >= 0; i--) {
           if ((frame_head & (0b11111 << i)) == 0) {
