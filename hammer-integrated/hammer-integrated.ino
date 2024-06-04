@@ -1,3 +1,5 @@
+#include <hmac_sha256.h>
+
 #define Serial SerialUSB
 
 #define HAMMER_BIT_COUNT 5  // total number of bits to hammer for message frame
@@ -320,8 +322,6 @@ void sendFrame() {
         CAN0->CAN_MB[i].CAN_MDL = (uint32_t)(outgoing.data.value & 0xffffffff);
         CAN0->CAN_MB[i].CAN_MDH = (uint32_t)(outgoing.data.value >> 32);
 
-        can_enable_interrupt(CAN0, 0x01u << i);  //enable the TX interrupt for this box
-        can_global_send_transfer_cmd(CAN0, 0x1u << i);
 
         total_bits = 17;
         uint32_t frame_head = outgoing.length | (uint32_t)(outgoing.id << 7);  // 0b 0 ID 000 DLC
@@ -332,6 +332,11 @@ void sendFrame() {
             i -= 4;
           }
         }
+
+        hmac_sha256(key, sizeof(key) - 1, outgoing.data.bytes, outgoing.length, hammer_data, 32);
+
+        can_enable_interrupt(CAN0, 0x01u << i);  //enable the TX interrupt for this box
+        can_global_send_transfer_cmd(CAN0, 0x1u << i);
 
         // message sent
         return;
