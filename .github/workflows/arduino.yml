@@ -4,6 +4,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: |
+          git clone --depth=1 https://github.com/h5p9sl/hmac_sha256.git ~/Arduino/libraries/hmac_sha256
+          sed -i '6s/^/#include <Arduino.h>\n\n/' ~/Arduino/libraries/hmac_sha256/hmac_sha256.h
+          sed -i '17s/^#include <memory.h>/#include <string.h>/' ~/Arduino/libraries/hmac_sha256/sha256.c
       - uses: arduino/compile-sketches@v1.1.0
         with:
           fqbn: "arduino:sam:arduino_due_x"
