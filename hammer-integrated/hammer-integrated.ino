@@ -24,6 +24,9 @@ volatile bool reset_value = false;
 
 static unsigned long last_time = 0;
 
+uint8_t total_bits;
+bool is_frame_processed;
+
 #define DATA_LENGTH 8
 const uint8_t data[DATA_LENGTH] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff };
 
@@ -122,8 +125,11 @@ void CAN0_Handler() {
   }
   if (ul_status & CAN_SR_TOVF) {  //timer overflow
   }
-  // if (ul_status & CAN_SR_TSTP) { //timestamp - start or end of frame
-  // }
+  if (ul_status & CAN_SR_TSTP) {  //timestamp - start or end of frame
+    if (!is_frame_processed) {
+      startTimer(TC1, 0, TC3_IRQn, (uint32_t)(SPEED * 1000 / (total_bits - 0.8)));
+    }
+  }
   if (ul_status & CAN_SR_CERR) {  //CRC error in mailbox
   }
   if (ul_status & CAN_SR_SERR) {  //stuffing error in mailbox
@@ -140,13 +146,13 @@ void CAN0_Handler() {
 void TC3_Handler() {
   TC_GetStatus(TC1, 0);
 
+  is_frame_processed = true;
   hammer_index = 0;
   if (hammer_index < HAMMER_BIT_COUNT) {
     // starts TC4 at next data bit (~0% mark)
     startTimer(TC1, 1, TC4_IRQn, SPEED * 1000);
 
     // turn on multiplexing
-    PIOA->PIO_OER = PIO_PA0A_CANTX0;
     PIOA->PIO_PER = PIO_PA0A_CANTX0;
 
     reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
@@ -170,7 +176,6 @@ void TC4_Handler() {
     frame_bit_hammered = false;
 
     // turn on multiplexing
-    PIOA->PIO_OER = PIO_PA0A_CANTX0;
     PIOA->PIO_PER = PIO_PA0A_CANTX0;
 
     // start TC7 to fire 5 times in a bit (~20% mark)
@@ -200,7 +205,6 @@ void TC6_Handler() {
     stopTimer(TC2, 0, TC6_IRQn);
 
     // turn off multiplexing
-    // PIOA->PIO_ODR = PIO_PA0A_CANTX0;
     PIOA->PIO_PDR = PIO_PA0A_CANTX0;
   }
 }
@@ -236,6 +240,8 @@ void setup() {
   pmc_enable_periph_clk(ID_CAN0);
   can_init(CAN0, SystemCoreClock, SPEED);
   can_disable_interrupt(CAN0, CAN_DISABLE_ALL_INTERRUPT_MASK);
+  can_enable_interrupt(CAN0, CAN_SR_TSTP);
+  can_set_timestamp_capture_point(CAN0, 0);
 
   // init RX boxen
   int c;
@@ -282,11 +288,6 @@ void setup() {
   PIOB->PIO_PER = PIO_PB26;
   PIOB->PIO_OER = PIO_PB26;
 
-  // digitalWrite(LED_BUILTIN, HIGH);
-  // delay(500);
-  // digitalWrite(LED_BUILTIN, LOW);
-  // delay(1000);
-
   // sets up mailbox 0 for standard IDs
   CAN0->CAN_MB[0].CAN_MAM = CAN_MAM_MIDvA(0);
   CAN0->CAN_MB[0].CAN_MID &= ~CAN_MAM_MIDE;
@@ -301,8 +302,8 @@ void setup() {
   }
 }
 
-
 void sendFrame() {
+  is_frame_processed = false;
   for (int i = 0; i < 8; i++) {
     if (((CAN0->CAN_MB[i].CAN_MMR >> 24) & 7) == CAN_MB_TX_MODE) {  //is this mailbox set up as a TX box?
       if (CAN0->CAN_MB[i].CAN_MSR & CAN_MSR_MRDY) {                 //is it also available (not sending anything?)
@@ -317,12 +318,12 @@ void sendFrame() {
 
         // set data bytes
         CAN0->CAN_MB[i].CAN_MDL = (uint32_t)(outgoing.data.value & 0xffffffff);
-        CAN0->CAN_MB[i].CAN_MDH = (uint32_t)((outgoing.data.value & 0xffffffff00000000) >> 32);
+        CAN0->CAN_MB[i].CAN_MDH = (uint32_t)(outgoing.data.value >> 32);
 
         can_enable_interrupt(CAN0, 0x01u << i);  //enable the TX interrupt for this box
-        can_global_send_transfer_cmd(CAN0, (0x1u << i));
+        can_global_send_transfer_cmd(CAN0, 0x1u << i);
 
-        uint8_t total_bits = 19;
+        total_bits = 17;
         uint32_t frame_head = outgoing.length | (uint32_t)(outgoing.id << 7);  // 0b 0 ID 000 DLC
 
         for (int8_t i = 14; i >= 0; i--) {
@@ -331,8 +332,6 @@ void sendFrame() {
             i -= 4;
           }
         }
-
-        startTimer(TC1, 0, TC3_IRQn, (uint32_t)(SPEED * 1000 / (float)total_bits) - 60);
 
         // message sent
         return;
