@@ -47,38 +47,10 @@ void mailbox_int_handler(uint8_t mb) {
       case 1:                                          //receive
       case 2:                                          //receive w/ overwrite
       case 4:                                          //consumer - technically still a receive buffer
-        // mailbox_read(mb, &tempFrame);
-        // //First, try to send a callback. If no callback registered then buffer the frame.
-        // if (cbCANFrame[mb]) {
-        //   caughtFrame = true;
-        //   (*cbCANFrame[mb])(&tempFrame);
-        // } else if (cbCANFrame[8]) {
-        //   caughtFrame = true;
-        //   (*cbCANFrame[8])(&tempFrame);
-        // } else {
-        //   for (int listenerPos = 0; listenerPos < SIZE_LISTENERS; listenerPos++) {
-        //     thisListener = listener[listenerPos];
-        //     if (thisListener != NULL) {
-        //       if (thisListener->callbacksActive & (1 << mb)) {
-        //         caughtFrame = true;
-        //         thisListener->gotFrame(&tempFrame, mb);
-        //       } else if (thisListener->callbacksActive & 256) {
-        //         caughtFrame = true;
-        //         thisListener->gotFrame(&tempFrame, -1);
-        //       }
-        //     }
-        //   }
-        // }
-        // if (!caughtFrame) {  // if none of the callback types caught this frame then queue it in the buffer
-        //   uint8_t temp = (rx_buffer_head + 1) % SIZE_RX_BUFFER;
-        //   if (temp != rx_buffer_tail) {
-        //     memcpy((void *)&rx_frame_buff[rx_buffer_head], &tempFrame, sizeof(CAN_FRAME));
-        //     rx_buffer_head = temp;
-        //   }
-        // }
+        can_mailbox_send_transfer_cmd(CAN0, mb);
         break;
       case 3:  //transmit
-        can_disable_interrupt(CAN0, 0x01 << mb);
+        can_disable_interrupt(CAN0, 0x01u << mb);
         break;
       case 5:  //producer - technically still a transmit buffer
         break;
@@ -319,21 +291,21 @@ void setup() {
 
 void sendFrame() {
   is_frame_processed = false;
-  for (int i = 0; i < 8; i++) {
-    if (((CAN0->CAN_MB[i].CAN_MMR >> 24) & 7) == CAN_MB_TX_MODE) {  //is this mailbox set up as a TX box?
-      if (CAN0->CAN_MB[i].CAN_MSR & CAN_MSR_MRDY) {                 //is it also available (not sending anything?)
+  for (int mb = 0; mb < 8; mb++) {
+    if (((CAN0->CAN_MB[mb].CAN_MMR >> 24) & 7) == CAN_MB_TX_MODE) {  //is this mailbox set up as a TX box?
+      if (CAN0->CAN_MB[mb].CAN_MSR & CAN_MSR_MRDY) {                 //is it also available (not sending anything?)
         // set id to outgoing frame's id
-        CAN0->CAN_MB[i].CAN_MID = CAN_MID_MIDvA(outgoing.id);
+        CAN0->CAN_MB[mb].CAN_MID = CAN_MID_MIDvA(outgoing.id);
 
         // set data length to outgoing frame's length
-        CAN0->CAN_MB[i].CAN_MCR = (CAN0->CAN_MB[i].CAN_MCR & ~CAN_MCR_MDLC_Msk) | CAN_MCR_MDLC(outgoing.length);
+        CAN0->CAN_MB[mb].CAN_MCR = (CAN0->CAN_MB[mb].CAN_MCR & ~CAN_MCR_MDLC_Msk) | CAN_MCR_MDLC(outgoing.length);
 
         // set priority to 4
-        CAN0->CAN_MB[i].CAN_MMR = (CAN0->CAN_MB[i].CAN_MMR & ~CAN_MMR_PRIOR_Msk) | (4 << CAN_MMR_PRIOR_Pos);
+        CAN0->CAN_MB[mb].CAN_MMR = (CAN0->CAN_MB[mb].CAN_MMR & ~CAN_MMR_PRIOR_Msk) | (4 << CAN_MMR_PRIOR_Pos);
 
         // set data bytes
-        CAN0->CAN_MB[i].CAN_MDL = (uint32_t)(outgoing.data.value & 0xffffffff);
-        CAN0->CAN_MB[i].CAN_MDH = (uint32_t)(outgoing.data.value >> 32);
+        CAN0->CAN_MB[mb].CAN_MDL = (uint32_t)(outgoing.data.value & 0xffffffff);
+        CAN0->CAN_MB[mb].CAN_MDH = (uint32_t)(outgoing.data.value >> 32);
 
         // calculate bits in first part of frame
         total_bits = 17;
@@ -348,8 +320,8 @@ void sendFrame() {
 
         hmac_sha256(key, sizeof(key) - 1, outgoing.data.bytes, outgoing.length, hammer_data, 32);
 
-        can_enable_interrupt(CAN0, 0x01u << i);  //enable the TX interrupt for this box
-        can_global_send_transfer_cmd(CAN0, 0x1u << i);
+        can_enable_interrupt(CAN0, 0x01u << mb);  //enable the TX interrupt for this box
+        can_global_send_transfer_cmd(CAN0, mb);
 
         // message sent
         return;
