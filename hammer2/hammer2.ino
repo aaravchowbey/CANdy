@@ -1,4 +1,3 @@
-// TODO: copy frames from CAN1 and send to CAN0 (make sure to not replicate these frames on CAN1 again keeping track with variable)
 // TODO: slight shift of hammering from last few data bytes to CRC
 
 /// #include <hmac_sha256.h>
@@ -20,6 +19,11 @@
     (value) ? (PIOB->PIO_SODR = PIO_PB14A_CANTX1) : (PIOB->PIO_CODR = PIO_PB14A_CANTX1); \
   } while (0);
 // PIO_PB14A_CANTX1
+
+#define CAN0_Write(value) \
+  do { \
+    (value) ? (PIOA->PIO_SODR = PIO_PA0A_CANTX0) : (PIOA->PIO_CODR = PIO_PA0A_CANTX0); \
+  } while (0);
 
 // (value) ? (PIOB->PIO_SODR = PIO_PB14A_CANTX1) : (PIOB->PIO_CODR = PIO_PB14A_CANTX1);
 
@@ -45,6 +49,11 @@ volatile bool frameBitHammered = false;
 
 volatile bool checking_for_sof = true;
 
+volatile bool checking_for_can1_sof = true;
+volatile bool replicate_frame_value = false;
+volatile bool writing_message_to_ecu = false;
+volatile bool sending_hammered_frame = false;
+
 union {
   volatile uint64_t val;
   uint8_t arr[8];
@@ -52,16 +61,16 @@ union {
 
 volatile uint8_t data_length = 0;
 
-void mailbox_int_handler(uint8_t mb) {
-  if (CAN0->CAN_MB[mb].CAN_MSR & CAN_MSR_MRDY) {       // mailbox signals it is ready
-    switch (((CAN0->CAN_MB[mb].CAN_MMR >> 24) & 7)) {  // what sort of mailbox is it?
+void mailbox_int_handler(Can* can, uint8_t mb) {
+  if (can->CAN_MB[mb].CAN_MSR & CAN_MSR_MRDY) {       // mailbox signals it is ready
+    switch (((can->CAN_MB[mb].CAN_MMR >> 24) & 7)) {  // what sort of mailbox is it?
       case 1:                                          // receive
       case 2:                                          // receive w/ overwrite
       case 4:                                          // consumer - technically still a receive buffer
-        can_mailbox_send_transfer_cmd(CAN0, mb);
+        can_mailbox_send_transfer_cmd(can, mb);
         break;
       case 3:  //transmit
-        can_disable_interrupt(CAN0, 0x01 << mb);
+        can_disable_interrupt(can, 0x01 << mb);
         break;
       case 5:  //producer - technically still a transmit buffer
         break;
@@ -73,37 +82,39 @@ void CAN0_Handler() {
   uint32_t ul_status = CAN0->CAN_SR;  //get status of interrupts
 
   if (ul_status & CAN_SR_MB0) {  //mailbox 0 event
-    mailbox_int_handler(0);
+    mailbox_int_handler(CAN0, 0);
   }
   if (ul_status & CAN_SR_MB1) {  //mailbox 1 event
-    mailbox_int_handler(1);
+    mailbox_int_handler(CAN0, 1);
   }
   if (ul_status & CAN_SR_MB2) {  //mailbox 2 event
-    mailbox_int_handler(2);
+    mailbox_int_handler(CAN0, 2);
   }
   if (ul_status & CAN_SR_MB3) {  //mailbox 3 event
-    mailbox_int_handler(3);
+    mailbox_int_handler(CAN0, 3);
   }
   if (ul_status & CAN_SR_MB4) {  //mailbox 4 event
-    mailbox_int_handler(4);
+    mailbox_int_handler(CAN0, 4);
   }
   if (ul_status & CAN_SR_MB5) {  //mailbox 5 event
-    mailbox_int_handler(5);
+    mailbox_int_handler(CAN0, 5);
   }
   if (ul_status & CAN_SR_MB6) {  //mailbox 6 event
-    mailbox_int_handler(6);
+    mailbox_int_handler(CAN0, 6);
   }
   if (ul_status & CAN_SR_MB7) {  //mailbox 7 event
-    mailbox_int_handler(7);
+    mailbox_int_handler(CAN0, 7);
   }
 
   // runs on second frame bit at ~70%
-  if (ul_status & CAN_SR_TSTP) {
+  if (ul_status & CAN_SR_TSTP && !writing_message_to_ecu) {
     if (checking_for_sof) {
       checking_for_sof = false;
       can_set_timestamp_capture_point(CAN0, 1);
 
-      // fires on third frame bit at ~70%
+      sending_hammered_frame = true;
+
+      // fires on third frame bit at ~70%9cb7f1bef56f6305c23f59cd13eedadcc1dfc752
       startTimer(TC0, 0, TC0_IRQn, SPEED * 1000);
 
       PIOB->PIO_PER = PIO_PB14A_CANTX1;
@@ -121,9 +132,68 @@ void CAN0_Handler() {
       // SET_LED(idk);
       // idk = !idk;
       checking_for_sof = true;
+
+      sending_hammered_frame = false;
       can_set_timestamp_capture_point(CAN0, 0);
       stopTimer(TC0, 0, TC0_IRQn);
       PIOB->PIO_PDR = PIO_PB14A_CANTX1;
+    }
+  }
+}
+
+void CAN1_Handler() {
+  uint32_t ul_status = CAN1->CAN_SR;  //get status of interrupts
+
+  if (ul_status & CAN_SR_MB0) {  //mailbox 0 event
+    mailbox_int_handler(CAN1, 0);
+  }
+  if (ul_status & CAN_SR_MB1) {  //mailbox 1 event
+    mailbox_int_handler(CAN1, 1);
+  }
+  if (ul_status & CAN_SR_MB2) {  //mailbox 2 event
+    mailbox_int_handler(CAN1, 2);
+  }
+  if (ul_status & CAN_SR_MB3) {  //mailbox 3 event
+    mailbox_int_handler(CAN1, 3);
+  }
+  if (ul_status & CAN_SR_MB4) {  //mailbox 4 event
+    mailbox_int_handler(CAN1, 4);
+  }
+  if (ul_status & CAN_SR_MB5) {  //mailbox 5 event
+    mailbox_int_handler(CAN1, 5);
+  }
+  if (ul_status & CAN_SR_MB6) {  //mailbox 6 event
+    mailbox_int_handler(CAN1, 6);
+  }
+  if (ul_status & CAN_SR_MB7) {  //mailbox 7 event
+    mailbox_int_handler(CAN1, 7);
+  }
+
+  // runs on second frame bit at ~70%
+  if (ul_status & CAN_SR_TSTP && !sending_hammered_frame) {
+    if (checking_for_can1_sof) {
+      checking_for_can1_sof = false;
+      can_set_timestamp_capture_point(CAN1, 1);
+      writing_message_to_ecu = true;
+
+      // start separate timer for CANTX 
+      // fires on third frame bit at ~70%
+      startTimer(TC0, 1, TC0_IRQn, SPEED * 1000);
+
+      PIOA->PIO_PER = PIO_PA0A_CANTX0;
+
+      // set replicate_frame_queue
+      replicate_frame_value = 0;
+      CAN0_Write(0);
+    } else {
+      // SET_LED(idk);
+      // idk = !idk;
+
+      writing_message_to_ecu = false;
+      checking_for_can1_sof = true;
+      can_set_timestamp_capture_point(CAN1, 0);
+      stopTimer(TC0, 1, TC0_IRQn);
+      PIOA->PIO_PDR = PIO_PA0A_CANTX0;
     }
   }
 }
@@ -173,6 +243,13 @@ void TC0_Handler() {
       }
     }
   }
+}
+
+void TC1_Handler() {
+  TC_GetStatus(TC0, 1);
+
+  CAN0_Write(frame_value);
+  frame_value = PIOB->PIO_PDSR & PIO_PB15A_CANRX1;
 }
 
 // runs hammering at ~20% for first data bit; helps synchronize later hammering
@@ -329,6 +406,45 @@ void setup() {
   //Initialize CAN1
   pmc_enable_periph_clk(ID_CAN1);
   can_init(CAN1, SystemCoreClock, SPEED);
+
+  // enable only timestamp interrupt and set to fire at SOF
+  can_disable_interrupt(CAN1, CAN_DISABLE_ALL_INTERRUPT_MASK);
+  can_enable_interrupt(CAN1, CAN_SR_TSTP);
+  can_set_timestamp_capture_point(CAN1, 0);
+
+  // enable CAN1 interrupt handler
+  NVIC_EnableIRQ(CAN1_IRQn);
+
+  // init RX boxen
+  for (c = 0; c < 8 - 1; c++) {
+    // set mode to CAN_MB_RX_MODE
+    CAN1->CAN_MB[c].CAN_MMR = (CAN1->CAN_MB[c].CAN_MMR & ~CAN_MMR_MOT_Msk) | (CAN_MB_RX_MODE << CAN_MMR_MOT_Pos);
+
+    // set id to 0x0
+    CAN1->CAN_MB[c].CAN_MID = CAN_MID_MIDvA(0x0);
+
+    // set accept mask to 0x7ff
+    CAN1->CAN_MB[c].CAN_MAM = CAN_MAM_MIDvA(0x7ff);
+    CAN1->CAN_MB[c].CAN_MID &= ~CAN_MAM_MIDE;
+  }
+
+  //Initialize TX boxen
+  for (c = 8 - 1; c < 8; c++) {
+    // set mode to CAN_MB_TX_MODE
+    CAN1->CAN_MB[c].CAN_MMR = (CAN1->CAN_MB[c].CAN_MMR & ~CAN_MMR_MOT_Msk) | (CAN_MB_TX_MODE << CAN_MMR_MOT_Pos);
+
+    // set priority to 10
+    CAN1->CAN_MB[c].CAN_MMR = (CAN1->CAN_MB[c].CAN_MMR & ~CAN_MMR_PRIOR_Msk) | (10 << CAN_MMR_PRIOR_Pos);
+
+    // set accept mask to 0x7ff
+    CAN1->CAN_MB[c].CAN_MAM = CAN_MAM_MIDvA(0x7ff);
+    CAN1->CAN_MB[c].CAN_MID &= ~CAN_MAM_MIDE;
+  }
+
+  CAN1->CAN_MB[0].CAN_MAM = CAN_MAM_MIDvA(0);
+  CAN1->CAN_MB[0].CAN_MID &= ~CAN_MAM_MIDE;
+  CAN1->CAN_MB[0].CAN_MID = CAN_MID_MIDvA(0);
+  can_enable_interrupt(CAN1, CAN_IER_MB0);
 }
 
 void loop() {
