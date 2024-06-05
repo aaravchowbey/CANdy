@@ -322,8 +322,8 @@ void sendFrame() {
 
         hmac_sha256(key, sizeof(key) - 1, outgoing.data.bytes, outgoing.length, hammer_data, 32);
 
-        can_enable_interrupt(CAN0, 0x01u << mb);  //enable the TX interrupt for this box
-        can_global_send_transfer_cmd(CAN0, mb);
+        can_enable_interrupt(CAN0, 0x01u << mb);  // enable the TX interrupt for this box
+        can_global_send_transfer_cmd(CAN0, 0x01u << mb);
 
         // message sent
         return;
