@@ -197,9 +197,9 @@ void TC7_Handler() {
 }
 
 void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
-  //Enable or disable write protect of PMC registers.
+  // disable write protect of PMC registers
   pmc_set_writeprotect(false);
-  //Enable the specified peripheral clock.
+  // enable the specified peripheral clock
   pmc_enable_periph_clk((uint32_t)irq);
 
   TC_Configure(tc, channel, TC_CMR_WAVE | TC_CMR_WAVSEL_UP_RC | TC_CMR_TCCLKS_TIMER_CLOCK4);
@@ -221,17 +221,16 @@ void stopTimer(Tc* tc, uint32_t channel, IRQn_Type irq) {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(LED_BUILTIN, OUTPUT);
 
-  // initialize CAN0
+  // init CAN0
   pmc_enable_periph_clk(ID_CAN0);
   can_init(CAN0, SystemCoreClock, SPEED);
   can_disable_interrupt(CAN0, CAN_DISABLE_ALL_INTERRUPT_MASK);
   can_enable_interrupt(CAN0, CAN_SR_TSTP);
   can_set_timestamp_capture_point(CAN0, 0);
 
-  // init RX boxen
-  int c;
+  // init RX boxes
+  uint8_t c;
   for (c = 0; c < 8 - 1; c++) {
     // set mode to CAN_MB_RX_MODE
     CAN0->CAN_MB[c].CAN_MMR = (CAN0->CAN_MB[c].CAN_MMR & ~CAN_MMR_MOT_Msk) | (CAN_MB_RX_MODE << CAN_MMR_MOT_Pos);
@@ -244,7 +243,7 @@ void setup() {
     CAN0->CAN_MB[c].CAN_MID &= ~CAN_MAM_MIDE;
   }
 
-  //Initialize TX boxen
+  // init TX boxes
   for (c = 8 - 1; c < 8; c++) {
     // set mode to CAN_MB_TX_MODE
     CAN0->CAN_MB[c].CAN_MMR = (CAN0->CAN_MB[c].CAN_MMR & ~CAN_MMR_MOT_Msk) | (CAN_MB_TX_MODE << CAN_MMR_MOT_Pos);
@@ -261,21 +260,24 @@ void setup() {
   NVIC_SetPriority(CAN0_IRQn, 12);
   NVIC_EnableIRQ(CAN0_IRQn);
 
-  PMC->PMC_PCER0 |= PMC_PCER0_PID11;  // PIOA power ON
+  // PIOA power ON
+  PMC->PMC_PCER0 |= PMC_PCER0_PID11;  
 
-  PIOA->PIO_PDR = PIO_PA0A_CANTX0;  // unable to send data w/ PER so changed to PDR (2024-03-13)
   PIOA->PIO_OER = PIO_PA0A_CANTX0;
+  PIOA->PIO_PDR = PIO_PA0A_CANTX0;
 
   PIOA->PIO_PUDR = PIO_PA0A_CANTX0;
 
   // PIOB power ON
   PMC->PMC_PCER0 |= PMC_PCER0_PID12;
 
-  // enable control of digital pin 22
-  PIOB->PIO_PER = PIO_PB26;
+  // enable control of digital pin 22 & LED
   PIOB->PIO_OER = PIO_PB26;
+  PIOB->PIO_PER = PIO_PB26;
+  PIOB->PIO_OER = PIO_PB27;
+  PIOB->PIO_PER = PIO_PB27;
 
-  // sets up mailbox 0 for standard IDs
+  // set up mailbox 0 for standard IDs
   CAN0->CAN_MB[0].CAN_MAM = CAN_MAM_MIDvA(0);
   CAN0->CAN_MB[0].CAN_MID &= ~CAN_MAM_MIDE;
   CAN0->CAN_MB[0].CAN_MID = CAN_MID_MIDvA(0);
@@ -292,9 +294,9 @@ void setup() {
 void sendFrame() {
   is_frame_processed = false;
   for (int mb = 0; mb < 8; mb++) {
-    if (((CAN0->CAN_MB[mb].CAN_MMR >> 24) & 7) == CAN_MB_TX_MODE) {  //is this mailbox set up as a TX box?
-      if (CAN0->CAN_MB[mb].CAN_MSR & CAN_MSR_MRDY) {                 //is it also available (not sending anything?)
-        // set id to outgoing frame's id
+    if (((CAN0->CAN_MB[mb].CAN_MMR >> 24) & 7) == CAN_MB_TX_MODE) {  // check if mailbox is set up as TX box
+      if (CAN0->CAN_MB[mb].CAN_MSR & CAN_MSR_MRDY) {                 // check if mailbox is available
+        // set ID to outgoing frame's ID
         CAN0->CAN_MB[mb].CAN_MID = CAN_MID_MIDvA(outgoing.id);
 
         // set data length to outgoing frame's length
