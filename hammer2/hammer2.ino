@@ -1,33 +1,27 @@
 // TODO: slight shift of hammering from last few data bytes to CRC
-
-/// #include <hmac_sha256.h>
+// #include <hmac_sha256.h>
 
 #define Serial SerialUSB
 
 #define SPEED CAN_BPS_50K
 
-#define HAMMER_BIT_COUNT 10  // total number of bits to hammer for message frame
-#define HAMMER_SIZE 1        // number of bits to hammer per data bit
+#define HAMMER_BIT_COUNT 5  // total number of bits to hammer for message frame
+#define HAMMER_SIZE 1       // number of bits to hammer per data bit
 
-#define SET_LED(state) \
+#define PIN_WRITE(value) \
   do { \
-    (state) ? (PIOB->PIO_SODR = PIO_PB26) : (PIOB->PIO_CODR = PIO_PB26); \
+    (value) ? (PIOB->PIO_SODR = PIO_PB26) : (PIOB->PIO_CODR = PIO_PB26); \
   } while (0);
 
 #define CANdy_Write(value) \
   do { \
     (value) ? (PIOB->PIO_SODR = PIO_PB14A_CANTX1) : (PIOB->PIO_CODR = PIO_PB14A_CANTX1); \
   } while (0);
-// PIO_PB14A_CANTX1
 
 #define CAN0_Write(value) \
   do { \
     (value) ? (PIOA->PIO_SODR = PIO_PA0A_CANTX0) : (PIOA->PIO_CODR = PIO_PA0A_CANTX0); \
   } while (0);
-
-// (value) ? (PIOB->PIO_SODR = PIO_PB14A_CANTX1) : (PIOB->PIO_CODR = PIO_PB14A_CANTX1);
-
-volatile bool idk = false;
 
 volatile bool hammer_state = false;
 
@@ -51,6 +45,7 @@ volatile bool checking_for_sof = true;
 
 volatile bool checking_for_can1_sof = true;
 volatile bool replicate_frame_value = false;
+
 volatile bool writing_message_to_ecu = false;
 volatile bool sending_hammered_frame = false;
 
@@ -61,12 +56,12 @@ union {
 
 volatile uint8_t data_length = 0;
 
-void mailbox_int_handler(Can* can, uint8_t mb) {
+void mailbox_int_handler(Can *can, uint8_t mb) {
   if (can->CAN_MB[mb].CAN_MSR & CAN_MSR_MRDY) {       // mailbox signals it is ready
     switch (((can->CAN_MB[mb].CAN_MMR >> 24) & 7)) {  // what sort of mailbox is it?
-      case 1:                                          // receive
-      case 2:                                          // receive w/ overwrite
-      case 4:                                          // consumer - technically still a receive buffer
+      case 1:                                         // receive
+      case 2:                                         // receive w/ overwrite
+      case 4:                                         // consumer - technically still a receive buffer
         can_mailbox_send_transfer_cmd(can, mb);
         break;
       case 3:  //transmit
@@ -107,14 +102,11 @@ void CAN0_Handler() {
   }
 
   // runs on second frame bit at ~70%
-  if (ul_status & CAN_SR_TSTP && !writing_message_to_ecu) {
+  if ((ul_status & CAN_SR_TSTP) && !writing_message_to_ecu) {
+    sending_hammered_frame = checking_for_sof;
+
     if (checking_for_sof) {
-      checking_for_sof = false;
-      can_set_timestamp_capture_point(CAN0, 1);
-
-      sending_hammered_frame = true;
-
-      // fires on third frame bit at ~70%9cb7f1bef56f6305c23f59cd13eedadcc1dfc752
+      // fires on third frame bit at ~70%
       startTimer(TC0, 0, TC0_IRQn, SPEED * 1000);
 
       PIOB->PIO_PER = PIO_PB14A_CANTX1;
@@ -129,15 +121,12 @@ void CAN0_Handler() {
       frame_bits = 1;
       hammer_index = 0;
     } else {
-      // SET_LED(idk);
-      // idk = !idk;
-      checking_for_sof = true;
-
-      sending_hammered_frame = false;
-      can_set_timestamp_capture_point(CAN0, 0);
       stopTimer(TC0, 0, TC0_IRQn);
       PIOB->PIO_PDR = PIO_PB14A_CANTX1;
     }
+
+    can_set_timestamp_capture_point(CAN0, (checking_for_sof ? 1 : 0));
+    checking_for_sof = !checking_for_sof;
   }
 }
 
@@ -170,15 +159,13 @@ void CAN1_Handler() {
   }
 
   // runs on second frame bit at ~70%
-  if (ul_status & CAN_SR_TSTP && !sending_hammered_frame) {
-    if (checking_for_can1_sof) {
-      checking_for_can1_sof = false;
-      can_set_timestamp_capture_point(CAN1, 1);
-      writing_message_to_ecu = true;
+  if ((ul_status & CAN_SR_TSTP) && !sending_hammered_frame) {
+    writing_message_to_ecu = checking_for_can1_sof;
 
-      // start separate timer for CANTX 
+    if (checking_for_can1_sof) {
+      // start separate timer for CANTX
       // fires on third frame bit at ~70%
-      startTimer(TC0, 1, TC0_IRQn, SPEED * 1000);
+      startTimer(TC0, 1, TC1_IRQn, SPEED * 1000);
 
       PIOA->PIO_PER = PIO_PA0A_CANTX0;
 
@@ -186,15 +173,12 @@ void CAN1_Handler() {
       replicate_frame_value = 0;
       CAN0_Write(0);
     } else {
-      // SET_LED(idk);
-      // idk = !idk;
-
-      writing_message_to_ecu = false;
-      checking_for_can1_sof = true;
-      can_set_timestamp_capture_point(CAN1, 0);
-      stopTimer(TC0, 1, TC0_IRQn);
+      stopTimer(TC0, 1, TC1_IRQn);
       PIOA->PIO_PDR = PIO_PA0A_CANTX0;
     }
+
+    can_set_timestamp_capture_point(CAN1, (checking_for_can1_sof ? 1 : 0));
+    checking_for_can1_sof = !checking_for_can1_sof;
   }
 }
 
@@ -217,8 +201,6 @@ void TC0_Handler() {
     frame_bits++;
 
     if (frame_bits == 15 && (frame_value & 0b111) != 0) {
-      SET_LED(idk);
-      idk = !idk;
       // TODO: figure out why stopTimer fails to work here
       // stopTimer(TC0, 0, TC0_IRQn);
     } else if (frame_bits == 19) {
@@ -233,9 +215,6 @@ void TC0_Handler() {
     } else if (data_length != 0 && frame_bits > 19 && frame_bits <= 19 + data_length * 8) {
       frame_data.val = (frame_data.val << 1) | frame_value;
 
-      // SET_LED(idk);
-      // idk = !idk;
-
       if (frame_bits == 19 + data_length * 8) {
         // hammer_data[0] = 4;
         // hmac_sha256(key, sizeof(key) - 1, frame_data.arr, data_length, hammer_data, 32);
@@ -248,8 +227,8 @@ void TC0_Handler() {
 void TC1_Handler() {
   TC_GetStatus(TC0, 1);
 
-  CAN0_Write(frame_value);
-  frame_value = PIOB->PIO_PDSR & PIO_PB15A_CANRX1;
+  CAN0_Write(replicate_frame_value);
+  replicate_frame_value = PIOB->PIO_PDSR & PIO_PB15A_CANRX1;
 }
 
 // runs hammering at ~20% for first data bit; helps synchronize later hammering
