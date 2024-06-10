@@ -12,26 +12,29 @@
     (value) ? (PIOA->PIO_SODR = PIO_PA0A_CANTX0) : (PIOA->PIO_CODR = PIO_PA0A_CANTX0); \
   } while (0)
 
-// data bits to hammer
-uint8_t hammer_data[32] = { 0b11111111, 0, 0, 0, 0 };
-const unsigned char key[] = "super-secret-key";
-
-// current index of hammer_data
-volatile uint8_t hammer_index = 0;
-
-// bit in frame has been completely hammered
-volatile bool frame_bit_hammered = false;
-
-volatile bool reset_value = false;
-
-static unsigned long last_time = 0;
-
-uint8_t total_bits;
-bool is_frame_processed;
-
 #define DATA_LENGTH 8
 const uint8_t data[DATA_LENGTH] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff };
 
+// number of bits until data bits
+uint8_t total_bits;
+// whether hammering has been initiated for frame
+bool is_hammer_complete = true;
+// bit in frame has been completely hammered
+volatile bool frame_bit_hammered = false;
+// value to reset to after hammering (frame bit value)
+volatile bool reset_value = false;
+
+// data bits to hammer
+uint8_t hammer_data[32] = { 0 };
+// current index of hammer_data
+volatile uint8_t hammer_index = 0;
+
+// key to generate HMAC
+const unsigned char key[] = "super-secret-key";
+
+static unsigned long last_time = 0;
+
+// outgoing frame
 struct {
   uint32_t id;
   uint8_t length;
@@ -42,77 +45,54 @@ struct {
 } outgoing;
 
 void mailbox_int_handler(uint8_t mb) {
-  if (CAN0->CAN_MB[mb].CAN_MSR & CAN_MSR_MRDY) {       //mailbox signals it is ready
-    switch (((CAN0->CAN_MB[mb].CAN_MMR >> 24) & 7)) {  //what sort of mailbox is it?
-      case 1:                                          //receive
-      case 2:                                          //receive w/ overwrite
-      case 4:                                          //consumer - technically still a receive buffer
+  if (CAN0->CAN_MB[mb].CAN_MSR & CAN_MSR_MRDY) {       // mailbox signals it is ready
+    switch (((CAN0->CAN_MB[mb].CAN_MMR >> 24) & 7)) {  // what sort of mailbox is it?
+      case 1:                                          // receive
+      case 2:                                          // receive w/ overwrite
+      case 4:                                          // consumer - technically still a receive buffer
         can_mailbox_send_transfer_cmd(CAN0, mb);
         break;
-      case 3:  //transmit
+      case 3:  // transmit
         can_disable_interrupt(CAN0, 0x01u << mb);
         break;
-      case 5:  //producer - technically still a transmit buffer
+      case 5:  // producer - technically still a transmit buffer
         break;
     }
   }
 }
 
 void CAN0_Handler() {
-  uint32_t ul_status = CAN0->CAN_SR;  //get status of interrupts
+  // get status of interrupts
+  uint32_t ul_status = CAN0->CAN_SR;
 
-  if (ul_status & CAN_SR_MB0) {  //mailbox 0 event
+  if (ul_status & CAN_SR_MB0) {  // mailbox 0 event
     mailbox_int_handler(0);
   }
-  if (ul_status & CAN_SR_MB1) {  //mailbox 1 event
+  if (ul_status & CAN_SR_MB1) {  // mailbox 1 event
     mailbox_int_handler(1);
   }
-  if (ul_status & CAN_SR_MB2) {  //mailbox 2 event
+  if (ul_status & CAN_SR_MB2) {  // mailbox 2 event
     mailbox_int_handler(2);
   }
-  if (ul_status & CAN_SR_MB3) {  //mailbox 3 event
+  if (ul_status & CAN_SR_MB3) {  // mailbox 3 event
     mailbox_int_handler(3);
   }
-  if (ul_status & CAN_SR_MB4) {  //mailbox 4 event
+  if (ul_status & CAN_SR_MB4) {  // mailbox 4 event
     mailbox_int_handler(4);
   }
-  if (ul_status & CAN_SR_MB5) {  //mailbox 5 event
+  if (ul_status & CAN_SR_MB5) {  // mailbox 5 event
     mailbox_int_handler(5);
   }
-  if (ul_status & CAN_SR_MB6) {  //mailbox 6 event
+  if (ul_status & CAN_SR_MB6) {  // mailbox 6 event
     mailbox_int_handler(6);
   }
-  if (ul_status & CAN_SR_MB7) {  //mailbox 7 event
+  if (ul_status & CAN_SR_MB7) {  // mailbox 7 event
     mailbox_int_handler(7);
   }
-  if (ul_status & CAN_SR_ERRA) {  //error active
-  }
-  if (ul_status & CAN_SR_WARN) {  //warning limit
-  }
-  if (ul_status & CAN_SR_ERRP) {  //error passive
-  }
-  if (ul_status & CAN_SR_BOFF) {  //bus off
-  }
-  if (ul_status & CAN_SR_SLEEP) {  //controller in sleep mode
-  }
-  if (ul_status & CAN_SR_WAKEUP) {  //controller woke up
-  }
-  if (ul_status & CAN_SR_TOVF) {  //timer overflow
-  }
-  if (ul_status & CAN_SR_TSTP) {  //timestamp - start or end of frame
-    if (!is_frame_processed) {
-      startTimer(TC1, 0, TC3_IRQn, (uint32_t)(SPEED * 1000 / (total_bits - 0.8)));
+  if (ul_status & CAN_SR_TSTP) {  // timestamp - start of frame
+    if (!is_hammer_complete) {
+      startTimer(TC1, 0, TC3_IRQn, (uint32_t)(SPEED * 1000 / (total_bits - 0.75)));
     }
-  }
-  if (ul_status & CAN_SR_CERR) {  //CRC error in mailbox
-  }
-  if (ul_status & CAN_SR_SERR) {  //stuffing error in mailbox
-  }
-  if (ul_status & CAN_SR_AERR) {  //ack error
-  }
-  if (ul_status & CAN_SR_FERR) {  //form error
-  }
-  if (ul_status & CAN_SR_BERR) {  //bit error
   }
 }
 
@@ -120,7 +100,7 @@ void CAN0_Handler() {
 void TC3_Handler() {
   TC_GetStatus(TC1, 0);
 
-  is_frame_processed = true;
+  is_hammer_complete = true;
   hammer_index = 0;
   if (hammer_index < HAMMER_BIT_COUNT) {
     // starts TC4 at next data bit (~0% mark)
@@ -220,14 +200,39 @@ void stopTimer(Tc* tc, uint32_t channel, IRQn_Type irq) {
 }
 
 void setup() {
+  // start serial port at 115200 bps
   Serial.begin(115200);
+
+  // PIOA power ON
+  PMC->PMC_PCER0 |= PMC_PCER0_PID11;
+
+  // multiplex CANTX0
+  PIOA->PIO_OER = PIO_PA0A_CANTX0;
+  PIOA->PIO_PDR = PIO_PA0A_CANTX0;
+  PIOA->PIO_PUDR = PIO_PA0A_CANTX0;
+
+  // PIOB power ON
+  PMC->PMC_PCER0 |= PMC_PCER0_PID12;
+
+  // enable control of digital pin 22
+  PIOB->PIO_OER = PIO_PB26;
+  PIOB->PIO_PER = PIO_PB26;
+
+  // enable control of LED
+  PIOB->PIO_OER = PIO_PB27;
+  PIOB->PIO_PER = PIO_PB27;
 
   // init CAN0
   pmc_enable_periph_clk(ID_CAN0);
   can_init(CAN0, SystemCoreClock, SPEED);
+
+  // enable only timestamp interrupt and set to fire at SOF
   can_disable_interrupt(CAN0, CAN_DISABLE_ALL_INTERRUPT_MASK);
   can_enable_interrupt(CAN0, CAN_SR_TSTP);
   can_set_timestamp_capture_point(CAN0, 0);
+
+  // enable CAN0 interrupt handler
+  NVIC_EnableIRQ(CAN0_IRQn);
 
   // init RX boxes
   uint8_t c;
@@ -244,7 +249,7 @@ void setup() {
   }
 
   // init TX boxes
-  for (c = 8 - 1; c < 8; c++) {
+  for (; c < 8; c++) {
     // set mode to CAN_MB_TX_MODE
     CAN0->CAN_MB[c].CAN_MMR = (CAN0->CAN_MB[c].CAN_MMR & ~CAN_MMR_MOT_Msk) | (CAN_MB_TX_MODE << CAN_MMR_MOT_Pos);
 
@@ -256,43 +261,22 @@ void setup() {
     CAN0->CAN_MB[c].CAN_MID &= ~CAN_MAM_MIDE;
   }
 
-  // enable CAN0 interrupt handler
-  NVIC_SetPriority(CAN0_IRQn, 12);
-  NVIC_EnableIRQ(CAN0_IRQn);
-
-  // PIOA power ON
-  PMC->PMC_PCER0 |= PMC_PCER0_PID11;  
-
-  PIOA->PIO_OER = PIO_PA0A_CANTX0;
-  PIOA->PIO_PDR = PIO_PA0A_CANTX0;
-
-  PIOA->PIO_PUDR = PIO_PA0A_CANTX0;
-
-  // PIOB power ON
-  PMC->PMC_PCER0 |= PMC_PCER0_PID12;
-
-  // enable control of digital pin 22 & LED
-  PIOB->PIO_OER = PIO_PB26;
-  PIOB->PIO_PER = PIO_PB26;
-  PIOB->PIO_OER = PIO_PB27;
-  PIOB->PIO_PER = PIO_PB27;
-
   // set up mailbox 0 for standard IDs
   CAN0->CAN_MB[0].CAN_MAM = CAN_MAM_MIDvA(0);
   CAN0->CAN_MB[0].CAN_MID &= ~CAN_MAM_MIDE;
   CAN0->CAN_MB[0].CAN_MID = CAN_MID_MIDvA(0);
   can_enable_interrupt(CAN0, CAN_IER_MB0);
 
+  // set outgoing frame data
   outgoing.id = 0x400;
   outgoing.length = DATA_LENGTH;
-
   for (int i = 0; i < DATA_LENGTH; i++) {
     outgoing.data.bytes[i] = data[i];
   }
 }
 
 void sendFrame() {
-  is_frame_processed = false;
+  is_hammer_complete = false;
   for (int mb = 0; mb < 8; mb++) {
     if (((CAN0->CAN_MB[mb].CAN_MMR >> 24) & 7) == CAN_MB_TX_MODE) {  // check if mailbox is set up as TX box
       if (CAN0->CAN_MB[mb].CAN_MSR & CAN_MSR_MRDY) {                 // check if mailbox is available
@@ -313,6 +297,7 @@ void sendFrame() {
         total_bits = 17;
         uint32_t frame_head = outgoing.length | (uint32_t)(outgoing.id << 7);  // 0b0[ID]000[DLC]
 
+        // sum number of stuff bits for outgoing frame
         for (int8_t i = 14; i >= 0; i--) {
           if ((frame_head & (0b11111 << i)) == 0) {
             total_bits++;
@@ -320,9 +305,12 @@ void sendFrame() {
           }
         }
 
+        // generate HMAC for message
         hmac_sha256(key, sizeof(key) - 1, outgoing.data.bytes, outgoing.length, hammer_data, 32);
 
-        can_enable_interrupt(CAN0, 0x01u << mb);  // enable the TX interrupt for this box
+        // enable the TX interrupt for this box
+        can_enable_interrupt(CAN0, 0x01u << mb);
+        // request to send message
         can_global_send_transfer_cmd(CAN0, 0x01u << mb);
 
         // message sent
@@ -330,26 +318,14 @@ void sendFrame() {
       }
     }
   }
-
-  // TODO: reimplement queue for sending messages
-  // //if execution got to this point then no free mailbox was found above
-  // //so, queue the frame if possible. But, don't increment the
-  // //tail if it would smash into the head and kill the queue.
-  // uint8_t temp;
-  // temp = (tx_buffer_tail + 1) % SIZE_TX_BUFFER;
-  // if (temp == tx_buffer_head) return false;
-  // tx_frame_buff[tx_buffer_tail].id = txFrame.id;
-  // tx_frame_buff[tx_buffer_tail].extended = txFrame.extended;
-  // tx_frame_buff[tx_buffer_tail].length = txFrame.length;
-  // tx_frame_buff[tx_buffer_tail].data.value = txFrame.data.value;
-  // tx_buffer_tail = temp;
 }
-
 
 void loop() {
   if (millis() - last_time > 1000) {
     last_time = millis();
     sendFrame();
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+
+    // toggle LED state
+    (PIOB->PIO_PDSR & PIO_PB27) ? PIOB->PIO_CODR = PIO_PB27 : PIOB->PIO_SODR = PIO_PB27;
   }
 }
