@@ -8,10 +8,11 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
 
   Can0.begin(CAN_BPS_50K);
-  for (int filter = 3; filter < 7; filter++) {
-    // receives standard frames
-    Can0.setRXFilter(filter, 0, 0, false);
-  }
+  Can0.watchFor();
+  // for (int filter = 3; filter < 7; filter++) {
+  //   // receives standard frames
+  //   Can0.setRXFilter(filter, 0, 0, false);
+  // }
 }
 
 void printFrame(CAN_FRAME &frame) {

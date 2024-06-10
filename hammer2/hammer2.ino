@@ -1,6 +1,4 @@
 // TODO: slight shift of hammering from last few data bytes to CRC
-// #include <hmac_sha256.h>
-
 #define Serial SerialUSB
 
 #define SPEED CAN_BPS_50K
@@ -13,7 +11,7 @@
     (value) ? (PIOB->PIO_SODR = PIO_PB26) : (PIOB->PIO_CODR = PIO_PB26); \
   } while (0);
 
-#define CANdy_Write(value) \
+#define CAN1_Write(value) \
   do { \
     (value) ? (PIOB->PIO_SODR = PIO_PB14A_CANTX1) : (PIOB->PIO_CODR = PIO_PB14A_CANTX1); \
   } while (0);
@@ -33,7 +31,7 @@ volatile uint8_t bits_after_prev_stuff = 0, frame_bits = 0;
 
 // data bits to hammer
 uint8_t hammer_data[32] = { 0b01010101, 0, 0, 0, 0 };
-const char key[] = "super-secret-key";
+const unsigned char key[] = "super-secret-key";
 
 // current index of hammer_data
 volatile uint8_t hammer_index = 0;
@@ -54,9 +52,9 @@ union {
   uint8_t arr[8];
 } frame_data;
 
-volatile uint8_t data_length = 0;
+volatile uint8_t data_length = 8;
 
-void mailbox_int_handler(Can *can, uint8_t mb) {
+void mailbox_int_handler(Can* can, uint8_t mb) {
   if (can->CAN_MB[mb].CAN_MSR & CAN_MSR_MRDY) {       // mailbox signals it is ready
     switch (((can->CAN_MB[mb].CAN_MMR >> 24) & 7)) {  // what sort of mailbox is it?
       case 1:                                         // receive
@@ -64,40 +62,40 @@ void mailbox_int_handler(Can *can, uint8_t mb) {
       case 4:                                         // consumer - technically still a receive buffer
         can_mailbox_send_transfer_cmd(can, mb);
         break;
-      case 3:  //transmit
+      case 3:  // transmit
         can_disable_interrupt(can, 0x01 << mb);
         break;
-      case 5:  //producer - technically still a transmit buffer
+      case 5:  // producer - technically still a transmit buffer
         break;
     }
   }
 }
 
 void CAN0_Handler() {
-  uint32_t ul_status = CAN0->CAN_SR;  //get status of interrupts
+  uint32_t ul_status = CAN0->CAN_SR;  // get status of interrupts
 
-  if (ul_status & CAN_SR_MB0) {  //mailbox 0 event
+  if (ul_status & CAN_SR_MB0) {  // mailbox 0 event
     mailbox_int_handler(CAN0, 0);
   }
-  if (ul_status & CAN_SR_MB1) {  //mailbox 1 event
+  if (ul_status & CAN_SR_MB1) {  // mailbox 1 event
     mailbox_int_handler(CAN0, 1);
   }
-  if (ul_status & CAN_SR_MB2) {  //mailbox 2 event
+  if (ul_status & CAN_SR_MB2) {  // mailbox 2 event
     mailbox_int_handler(CAN0, 2);
   }
-  if (ul_status & CAN_SR_MB3) {  //mailbox 3 event
+  if (ul_status & CAN_SR_MB3) {  // mailbox 3 event
     mailbox_int_handler(CAN0, 3);
   }
-  if (ul_status & CAN_SR_MB4) {  //mailbox 4 event
+  if (ul_status & CAN_SR_MB4) {  // mailbox 4 event
     mailbox_int_handler(CAN0, 4);
   }
-  if (ul_status & CAN_SR_MB5) {  //mailbox 5 event
+  if (ul_status & CAN_SR_MB5) {  // mailbox 5 event
     mailbox_int_handler(CAN0, 5);
   }
-  if (ul_status & CAN_SR_MB6) {  //mailbox 6 event
+  if (ul_status & CAN_SR_MB6) {  // mailbox 6 event
     mailbox_int_handler(CAN0, 6);
   }
-  if (ul_status & CAN_SR_MB7) {  //mailbox 7 event
+  if (ul_status & CAN_SR_MB7) {  // mailbox 7 event
     mailbox_int_handler(CAN0, 7);
   }
 
@@ -114,7 +112,7 @@ void CAN0_Handler() {
       // set frame_queue
       frame_value = 0;
       frame_queue = 0b11111110;
-      CANdy_Write(0);
+      CAN1_Write(0);
 
       // reset values
       bits_after_prev_stuff = 1;
@@ -131,30 +129,30 @@ void CAN0_Handler() {
 }
 
 void CAN1_Handler() {
-  uint32_t ul_status = CAN1->CAN_SR;  //get status of interrupts
+  uint32_t ul_status = CAN1->CAN_SR;  // get status of interrupts
 
-  if (ul_status & CAN_SR_MB0) {  //mailbox 0 event
+  if (ul_status & CAN_SR_MB0) {  // mailbox 0 event
     mailbox_int_handler(CAN1, 0);
   }
-  if (ul_status & CAN_SR_MB1) {  //mailbox 1 event
+  if (ul_status & CAN_SR_MB1) {  // mailbox 1 event
     mailbox_int_handler(CAN1, 1);
   }
-  if (ul_status & CAN_SR_MB2) {  //mailbox 2 event
+  if (ul_status & CAN_SR_MB2) {  // mailbox 2 event
     mailbox_int_handler(CAN1, 2);
   }
-  if (ul_status & CAN_SR_MB3) {  //mailbox 3 event
+  if (ul_status & CAN_SR_MB3) {  // mailbox 3 event
     mailbox_int_handler(CAN1, 3);
   }
-  if (ul_status & CAN_SR_MB4) {  //mailbox 4 event
+  if (ul_status & CAN_SR_MB4) {  // mailbox 4 event
     mailbox_int_handler(CAN1, 4);
   }
-  if (ul_status & CAN_SR_MB5) {  //mailbox 5 event
+  if (ul_status & CAN_SR_MB5) {  // mailbox 5 event
     mailbox_int_handler(CAN1, 5);
   }
-  if (ul_status & CAN_SR_MB6) {  //mailbox 6 event
+  if (ul_status & CAN_SR_MB6) {  // mailbox 6 event
     mailbox_int_handler(CAN1, 6);
   }
-  if (ul_status & CAN_SR_MB7) {  //mailbox 7 event
+  if (ul_status & CAN_SR_MB7) {  // mailbox 7 event
     mailbox_int_handler(CAN1, 7);
   }
 
@@ -186,7 +184,7 @@ void CAN1_Handler() {
 void TC0_Handler() {
   TC_GetStatus(TC0, 0);
 
-  CANdy_Write(frame_value);
+  CAN1_Write(frame_value);
   frame_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
 
   if (bits_after_prev_stuff >= 5 && ((frame_value == 0 && (frame_queue & 0b11111) == 0b11111) || (frame_value == 1 && (frame_queue & 0b11111) == 0))) {
@@ -273,22 +271,22 @@ void TC6_Handler() {
 
   if (!frameBitHammered) {
     // if bit in frame has not been completely hammered, continue with hammering
-    CANdy_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
+    CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
 
     hammer_index++;
 
     frameBitHammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
   } else {
     // reset value
-    CANdy_Write(resetValue);
+    CAN1_Write(resetValue);
 
     // stop TC6
     stopTimer(TC2, 0, TC6_IRQn);
   }
 }
 
-void startTimer(Tc *tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
-  // enable or disable write protect of PMC registers.
+void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
+  // disable write protect of PMC registers.
   pmc_set_writeprotect(false);
   // enable the specified peripheral clock.
   pmc_enable_periph_clk((uint32_t)irq);
@@ -305,7 +303,7 @@ void startTimer(Tc *tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
   NVIC_EnableIRQ(irq);
 }
 
-void stopTimer(Tc *tc, uint32_t channel, IRQn_Type irq) {
+void stopTimer(Tc* tc, uint32_t channel, IRQn_Type irq) {
   NVIC_DisableIRQ(irq);
   TC_Stop(tc, channel);
 }
@@ -314,18 +312,31 @@ void setup() {
   // start serial port at 115200 bps
   Serial.begin(115200);
 
+  // PIOA power ON
+  PMC->PMC_PCER0 |= PMC_PCER0_PID11;
+
+  // multiplex CANTX0
+  PIOA->PIO_PDR = PIO_PA0A_CANTX0;
+  PIOA->PIO_OER = PIO_PA0A_CANTX0;
+  PIOA->PIO_PUDR = PIO_PA0A_CANTX0;
+
   // PIOB power ON
   PMC->PMC_PCER0 |= PMC_PCER0_PID12;
 
-  // enable control of LEDs
-  PIOB->PIO_PER = PIO_PB27;
+  // enable control of LED
   PIOB->PIO_OER = PIO_PB27;
+  PIOB->PIO_PER = PIO_PB27;
 
   // enable control of digital pin 22
-  PIOB->PIO_PER = PIO_PB26;
   PIOB->PIO_OER = PIO_PB26;
+  PIOB->PIO_PER = PIO_PB26;
 
-  // initialize CAN0
+  // multiplex CANTX1
+  PIOB->PIO_OER = PIO_PB14A_CANTX1;
+  PIOB->PIO_PDR = PIO_PB14A_CANTX1;
+  PIOB->PIO_PUDR = PIO_PB14A_CANTX1;
+
+  // init CAN0
   pmc_enable_periph_clk(ID_CAN0);
   can_init(CAN0, SystemCoreClock, SPEED);
 
@@ -337,8 +348,8 @@ void setup() {
   // enable CAN0 interrupt handler
   NVIC_EnableIRQ(CAN0_IRQn);
 
-  // init RX boxen
-  int c;
+  // init RX0 boxes
+  uint8_t c;
   for (c = 0; c < 8 - 1; c++) {
     // set mode to CAN_MB_RX_MODE
     CAN0->CAN_MB[c].CAN_MMR = (CAN0->CAN_MB[c].CAN_MMR & ~CAN_MMR_MOT_Msk) | (CAN_MB_RX_MODE << CAN_MMR_MOT_Pos);
@@ -351,8 +362,8 @@ void setup() {
     CAN0->CAN_MB[c].CAN_MID &= ~CAN_MAM_MIDE;
   }
 
-  //Initialize TX boxen
-  for (c = 8 - 1; c < 8; c++) {
+  // init TX0 boxes
+  for (; c < 8; c++) {
     // set mode to CAN_MB_TX_MODE
     CAN0->CAN_MB[c].CAN_MMR = (CAN0->CAN_MB[c].CAN_MMR & ~CAN_MMR_MOT_Msk) | (CAN_MB_TX_MODE << CAN_MMR_MOT_Pos);
 
@@ -364,25 +375,13 @@ void setup() {
     CAN0->CAN_MB[c].CAN_MID &= ~CAN_MAM_MIDE;
   }
 
+  // set up mailbox 0 for standard IDs
   CAN0->CAN_MB[0].CAN_MAM = CAN_MAM_MIDvA(0);
   CAN0->CAN_MB[0].CAN_MID &= ~CAN_MAM_MIDE;
   CAN0->CAN_MB[0].CAN_MID = CAN_MID_MIDvA(0);
   can_enable_interrupt(CAN0, CAN_IER_MB0);
 
-  // PIOA power ON
-  PMC->PMC_PCER0 |= PMC_PCER0_PID11;
-
-  // disable pull-up on both pins (Pull-Up Disable Register)
-  PIOA->PIO_PUDR = PIO_PA0A_CANTX0;
-  PIOA->PIO_PDR = PIO_PA0A_CANTX0;
-  PIOA->PIO_OER = PIO_PA0A_CANTX0;
-
-  // turn on multiplexing
-  PIOB->PIO_PUDR = PIO_PB14A_CANTX1;
-  PIOB->PIO_PDR = PIO_PB14A_CANTX1;
-  PIOB->PIO_OER = PIO_PB14A_CANTX1;
-
-  //Initialize CAN1
+  // init CAN1
   pmc_enable_periph_clk(ID_CAN1);
   can_init(CAN1, SystemCoreClock, SPEED);
 
@@ -394,7 +393,7 @@ void setup() {
   // enable CAN1 interrupt handler
   NVIC_EnableIRQ(CAN1_IRQn);
 
-  // init RX boxen
+  // init RX1 boxes
   for (c = 0; c < 8 - 1; c++) {
     // set mode to CAN_MB_RX_MODE
     CAN1->CAN_MB[c].CAN_MMR = (CAN1->CAN_MB[c].CAN_MMR & ~CAN_MMR_MOT_Msk) | (CAN_MB_RX_MODE << CAN_MMR_MOT_Pos);
@@ -407,8 +406,8 @@ void setup() {
     CAN1->CAN_MB[c].CAN_MID &= ~CAN_MAM_MIDE;
   }
 
-  //Initialize TX boxen
-  for (c = 8 - 1; c < 8; c++) {
+  // init TX1 boxes
+  for (; c < 8; c++) {
     // set mode to CAN_MB_TX_MODE
     CAN1->CAN_MB[c].CAN_MMR = (CAN1->CAN_MB[c].CAN_MMR & ~CAN_MMR_MOT_Msk) | (CAN_MB_TX_MODE << CAN_MMR_MOT_Pos);
 

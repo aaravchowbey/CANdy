@@ -11,6 +11,10 @@ void setup() {
 
   Can0.begin(SPEED);
   Can0.watchFor();
+  for (int filter = 3; filter < 7; filter++) {
+    // receives standard frames
+    Can0.setRXFilter(filter, 0, 0, false);
+  }
 }
 
 void sendData(const uint8_t* data, const int dataLength) {
@@ -32,10 +36,29 @@ void sendData(const uint8_t* data, const int dataLength) {
 
 void loop() {
   const int dataLength = 8;
-  const uint8_t data[dataLength] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  const uint8_t data[dataLength] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
-  if (millis() - lastTime > 1000) {
+#ifndef SENDER2
+  // sender
+  if (millis() - lastTime > 1300) {
     lastTime = millis();
     sendData(data, dataLength);
   }
+  //
+  // CAN_FRAME incoming;
+  // if (Can0.available() > 0) {
+  //   Can0.read(incoming);
+  // }
+#else
+  // sender2
+  if (millis() - lastTime > 1700) {
+    lastTime = millis();
+    sendData(data, dataLength);
+  }
+  //
+  // CAN_FRAME incoming;
+  // if (Can0.available() > 0) {
+  //   Can0.read(incoming);
+  // }
+#endif
 }
