@@ -33,9 +33,16 @@ The following directories (and their sketches) are currently in use. Below is a 
   + `CAN1` used to send out hammered frames (and receive messages from other ECUs)
 
 ### Workflow
+#### `CAN0`
 - listens for `CAN_TSTP` interrupt on `CAN0` and starts if frame sent
-- `CAN0_Handler` starts `TC3` at ~0% mark for first data bit
+- `CAN0_Handler` starts `TC0` at ~70% mark for second data bit (starts instantly) and writes SOF to `CAN1`
+- `TC0_Handler` writes `frame_value` (old sample) and resamples; it also starts `TC3` when the data bits have started at ~20%
+    + `TC0` writes the SOF again for the first iteration
 - `TC3_Handler` starts `TC4` to run at ~0% mark for subsequent data bits and `TC6` to start at ~20% for that data bit
   + `TC6_Handler` writes one hammered bit and starts `TC7` to write subsequent hammered bits at 10x of bus speed
     * `TC7_Handler` hammers subsequent bits for that specific data bit and stops by writing the reset value (original value)
 - `TC4_Handler` again starts `TC6` (and subsequently `TC7`) until all the bits are written
+
+#### `CAN1`
+- `CAN1_Handler` starts `TC1` at ~70% mark for second data bit and writes SOF to `CAN1`
+- `TC1_Handler` is used to copy over messages sent from `CAN1` to `CAN0` (has a one bit delay)
