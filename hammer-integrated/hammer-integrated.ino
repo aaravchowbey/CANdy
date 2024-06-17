@@ -2,10 +2,17 @@
 
 #define Serial SerialUSB
 
-#define HAMMER_BIT_COUNT 5  // total number of bits to hammer for message frame
-#define HAMMER_SIZE 1       // number of bits to hammer per data bit
+#define HAMMER_BIT_COUNT 8   // total number of bits to hammer for message frame
+#define HAMMER_SIZE 8        // number of bits to hammer per data bit
+#define HAMMER_START 6.f      // percentage
+#define HAMMER_BIT_WIDTH 8.f  // percentage
 
 #define SPEED CAN_BPS_50K
+
+#define PIN_WRITE(value) \
+  do { \
+    (value) ? (PIOB->PIO_SODR = PIO_PB26) : (PIOB->PIO_CODR = PIO_PB26); \
+  } while (0);
 
 #define CANdy_Write(value) \
   do { \
@@ -16,7 +23,7 @@
 const uint8_t data[DATA_LENGTH] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff };
 
 // number of bits until data bits
-uint8_t total_bits;
+volatile uint8_t total_bits = 0;
 // whether hammering has been initiated for frame
 bool is_hammer_complete = true;
 // bit in frame has been completely hammered
@@ -25,7 +32,7 @@ volatile bool frame_bit_hammered = false;
 volatile bool reset_value = false;
 
 // data bits to hammer
-uint8_t hammer_data[32] = { 0 };
+uint8_t hammer_data[32] = { 0b01010101 };
 // current index of hammer_data
 volatile uint8_t hammer_index = 0;
 
@@ -65,6 +72,14 @@ void CAN0_Handler() {
   // get status of interrupts
   uint32_t ul_status = CAN0->CAN_SR;
 
+  if (ul_status & CAN_SR_TSTP) {  // timestamp - start of frame (70% of second bit)
+    if (!is_hammer_complete) {
+      // total (= 17 + stuff) bits between 2nd frame bit and 1st data bit + ~0.30 (or 70% of bit); SPEED * 1000 / (total_bits + 0.3)
+      // due to startTimer having a delay, frequency is slightly increased
+      #define MOVE_UP 19.f  // microseconds
+      startTimer(TC1, 2, TC5_IRQn, (uint32_t)((1000000.f * SPEED) / (SPEED * -MOVE_UP + 1000.f * (float)(total_bits) + 316.5f + HAMMER_START * 10.f)));
+    }
+  }
   if (ul_status & CAN_SR_MB0) {  // mailbox 0 event
     mailbox_int_handler(0);
   }
@@ -89,13 +104,9 @@ void CAN0_Handler() {
   if (ul_status & CAN_SR_MB7) {  // mailbox 7 event
     mailbox_int_handler(7);
   }
-  if (ul_status & CAN_SR_TSTP) {  // timestamp - start of frame
-    if (!is_hammer_complete) {
-      startTimer(TC1, 0, TC3_IRQn, (uint32_t)(SPEED * 1000 / (total_bits - 0.75)));
-    }
-  }
 }
 
+/*
 // runs hammering at ~20% for first data bit; helps synchronize later hammering
 void TC3_Handler() {
   TC_GetStatus(TC1, 0);
@@ -103,6 +114,9 @@ void TC3_Handler() {
   is_hammer_complete = true;
   hammer_index = 0;
   if (hammer_index < HAMMER_BIT_COUNT) {
+    // start TC6 to fire at ~20% mark
+    startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * (100 / HAMMER_START));
+    NVIC_SetPriority(TC6_IRQn, 0);
     // starts TC4 at next data bit (~0% mark)
     startTimer(TC1, 1, TC4_IRQn, SPEED * 1000);
 
@@ -111,9 +125,6 @@ void TC3_Handler() {
 
     reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
     frame_bit_hammered = false;
-
-    // start TC6 to fire at ~20% mark
-    startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * 5);
   }
 
   // stops first data bit hammering timer
@@ -125,32 +136,59 @@ void TC4_Handler() {
   TC_GetStatus(TC1, 1);
 
   if (hammer_index < HAMMER_BIT_COUNT) {
+    // start TC6 to fire at ~20% mark
+    startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * (100 / HAMMER_START));
     // if bits left to hammer, setup hammering for one data bit
     reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
-
-    // start TC6 to fire at ~20% mark
-    startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * 5);
   } else {
     // stop timer when no more bits to hammer
     stopTimer(TC1, 1, TC4_IRQn);
   }
+}
+*/
+
+void TC5_Handler() {
+  TC_GetStatus(TC1, 2);
+
+  is_hammer_complete = true;
+  hammer_index = 0;
+  if (hammer_index < HAMMER_BIT_COUNT) {
+    // start TC6 to fire at ~20% mark for remaining bits
+    startTimer(TC2, 0, TC6_IRQn, SPEED * 1000);
+    // start timer to hammer remaining bits for data bit
+    startTimer(TC2, 1, TC7_IRQn, SPEED * 1000 * (100 / HAMMER_BIT_WIDTH));
+
+    reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
+
+    // turn on multiplexing
+    PIOA->PIO_PER = PIO_PA0A_CANTX0;
+
+    CANdy_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
+    hammer_index++;
+
+    frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
+  }
+
+  stopTimer(TC1, 2, TC5_IRQn);
 }
 
 // handles hammering one bit and sets up hammering for one data bit
 void TC6_Handler() {
   TC_GetStatus(TC2, 0);
 
-  // turn on multiplexing
-  PIOA->PIO_PER = PIO_PA0A_CANTX0;
+  if (hammer_index < HAMMER_BIT_COUNT) {
+    // start timer to hammer remaining bits for data bit
+    startTimer(TC2, 1, TC7_IRQn, SPEED * 1000 * (100 / HAMMER_BIT_WIDTH));
 
-  // write first hammered bit for data bit
-  CANdy_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
-  hammer_index++;
+    // turn on multiplexing
+    PIOA->PIO_PER = PIO_PA0A_CANTX0;
 
-  frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
+    // write first hammered bit for data bit
+    CANdy_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
+    hammer_index++;
 
-  // start timer to hammer remaining bits for data bit
-  startTimer(TC2, 1, TC7_IRQn, SPEED * 1000 * 10);
+    frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
+  }
 
   stopTimer(TC2, 0, TC6_IRQn);
 }
@@ -182,7 +220,7 @@ void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
   // enable the specified peripheral clock
   pmc_enable_periph_clk((uint32_t)irq);
 
-  TC_Configure(tc, channel, TC_CMR_WAVE | TC_CMR_WAVSEL_UP_RC | TC_CMR_TCCLKS_TIMER_CLOCK4);
+  TC_Configure(tc, channel, TC_CMR_WAVE | TC_CMR_WAVSEL_UP_RC | TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_CLEAR | TC_CMR_TCCLKS_TIMER_CLOCK4);
   uint32_t rc = VARIANT_MCK / 128 / frequency;
 
   TC_SetRA(tc, channel, rc / 2);
@@ -294,19 +332,21 @@ void sendFrame() {
         CAN0->CAN_MB[mb].CAN_MDH = (uint32_t)(outgoing.data.value >> 32);
 
         // calculate bits in first part of frame
-        total_bits = 17;
-        uint32_t frame_head = outgoing.length | (uint32_t)(outgoing.id << 7);  // 0b0[ID]000[DLC]
+        uint8_t tb = 17;
+        uint32_t frame_head = (uint32_t)outgoing.length | (uint32_t)(outgoing.id << 7);  // 0b0[ID]000[DLC]
 
         // sum number of stuff bits for outgoing frame
         for (int8_t i = 14; i >= 0; i--) {
           if ((frame_head & (0b11111 << i)) == 0) {
-            total_bits++;
+            tb++;
             i -= 4;
           }
         }
 
+        total_bits = tb;
+
         // generate HMAC for message
-        hmac_sha256(key, sizeof(key) - 1, outgoing.data.bytes, outgoing.length, hammer_data, 32);
+        // hmac_sha256(key, sizeof(key) - 1, outgoing.data.bytes, outgoing.length, hammer_data, 32);
 
         // enable the TX interrupt for this box
         can_enable_interrupt(CAN0, 0x01u << mb);

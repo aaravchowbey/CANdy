@@ -9,9 +9,9 @@ include config.mk
 
 all: modem
 
-modem: sender sender2 hammer2
+modem: hammer2 sender sender2
 
-integrated: sender hammer-integrated
+integrated: hammer-integrated receiver
 
 sender:
 	$(PRINT_MESSAGE)
