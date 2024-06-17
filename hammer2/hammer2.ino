@@ -3,8 +3,11 @@
 
 #define SPEED CAN_BPS_50K
 
-#define HAMMER_BIT_COUNT 5  // total number of bits to hammer for message frame
-#define HAMMER_SIZE 1       // number of bits to hammer per data bit
+#define HAMMER_BIT_COUNT 12      // total number of bits to hammer for message frame
+#define HAMMER_SIZE 4            // number of bits to hammer per data bit
+#define HAMMER_START 20.f        // percentage
+#define HAMMER_BIT_WIDTH 8.f     // percentage
+#define FRAME_DELAY_AMOUNT 40.f  // percentage
 
 #define PIN_WRITE(value) \
   do { \
@@ -20,6 +23,10 @@
   do { \
     (value) ? (PIOA->PIO_SODR = PIO_PA0A_CANTX0) : (PIOA->PIO_CODR = PIO_PA0A_CANTX0); \
   } while (0);
+
+const uint32_t speed_freq = SPEED * 1000;
+const uint32_t frame_sync_delayed_freq = SPEED * 1000 * (100.f / (HAMMER_START + FRAME_DELAY_AMOUNT));
+const uint32_t hammer_freq = SPEED * 1000 * (100.f / HAMMER_BIT_WIDTH);
 
 volatile bool hammer_state = false;
 
@@ -74,6 +81,33 @@ void mailbox_int_handler(Can* can, uint8_t mb) {
 void CAN0_Handler() {
   uint32_t ul_status = CAN0->CAN_SR;  // get status of interrupts
 
+  // runs on second frame bit at ~70%
+  if ((ul_status & CAN_SR_TSTP) && !writing_message_to_ecu) {
+    sending_hammered_frame = checking_for_sof;
+
+    if (checking_for_sof) {
+      // fires instantly? TODO: find out why it fires instantly
+      startTimer(TC0, 0, TC0_IRQn, speed_freq);
+
+      PIOB->PIO_PER = PIO_PB14A_CANTX1;
+
+      // set frame_queue
+      frame_value = 0;
+      frame_queue = 0b11111110;
+
+      // reset values
+      bits_after_prev_stuff = 1;
+      frame_bits = 1;
+      hammer_index = 0;
+    } else {
+      stopTimer(TC0, 0, TC0_IRQn);
+      PIOB->PIO_PDR = PIO_PB14A_CANTX1;
+      PIN_WRITE(0);
+    }
+
+    can_set_timestamp_capture_point(CAN0, (checking_for_sof ? 1 : 0));
+    checking_for_sof = !checking_for_sof;
+  }
   if (ul_status & CAN_SR_MB0) {  // mailbox 0 event
     mailbox_int_handler(CAN0, 0);
   }
@@ -97,86 +131,6 @@ void CAN0_Handler() {
   }
   if (ul_status & CAN_SR_MB7) {  // mailbox 7 event
     mailbox_int_handler(CAN0, 7);
-  }
-
-  // runs on second frame bit at ~70%
-  if ((ul_status & CAN_SR_TSTP) && !writing_message_to_ecu) {
-    sending_hammered_frame = checking_for_sof;
-
-    if (checking_for_sof) {
-      // fires instantly? TODO: find out why it fires instantly
-      startTimer(TC0, 0, TC0_IRQn, SPEED * 1000);
-
-      PIOB->PIO_PER = PIO_PB14A_CANTX1;
-
-      // set frame_queue
-      frame_value = 0;
-      frame_queue = 0b11111110;
-      CAN1_Write(0);
-
-      // reset values
-      bits_after_prev_stuff = 1;
-      frame_bits = 1;
-      hammer_index = 0;
-    } else {
-      stopTimer(TC0, 0, TC0_IRQn);
-      PIOB->PIO_PDR = PIO_PB14A_CANTX1;
-    }
-
-    can_set_timestamp_capture_point(CAN0, (checking_for_sof ? 1 : 0));
-    checking_for_sof = !checking_for_sof;
-  }
-}
-
-void CAN1_Handler() {
-  uint32_t ul_status = CAN1->CAN_SR;  // get status of interrupts
-
-  if (ul_status & CAN_SR_MB0) {  // mailbox 0 event
-    mailbox_int_handler(CAN1, 0);
-  }
-  if (ul_status & CAN_SR_MB1) {  // mailbox 1 event
-    mailbox_int_handler(CAN1, 1);
-  }
-  if (ul_status & CAN_SR_MB2) {  // mailbox 2 event
-    mailbox_int_handler(CAN1, 2);
-  }
-  if (ul_status & CAN_SR_MB3) {  // mailbox 3 event
-    mailbox_int_handler(CAN1, 3);
-  }
-  if (ul_status & CAN_SR_MB4) {  // mailbox 4 event
-    mailbox_int_handler(CAN1, 4);
-  }
-  if (ul_status & CAN_SR_MB5) {  // mailbox 5 event
-    mailbox_int_handler(CAN1, 5);
-  }
-  if (ul_status & CAN_SR_MB6) {  // mailbox 6 event
-    mailbox_int_handler(CAN1, 6);
-  }
-  if (ul_status & CAN_SR_MB7) {  // mailbox 7 event
-    mailbox_int_handler(CAN1, 7);
-  }
-
-  // runs on second frame bit at ~70%
-  if ((ul_status & CAN_SR_TSTP) && !sending_hammered_frame) {
-    writing_message_to_ecu = checking_for_can1_sof;
-
-    if (checking_for_can1_sof) {
-      // start separate timer for CANTX; fires instantly
-      startTimer(TC0, 1, TC1_IRQn, SPEED * 1000);
-
-      // turn on multiplexing
-      PIOA->PIO_PER = PIO_PA0A_CANTX0;
-
-      // set replicate_frame_queue
-      replicate_frame_value = 0;
-      CAN0_Write(0);
-    } else {
-      stopTimer(TC0, 1, TC1_IRQn);
-      PIOA->PIO_PDR = PIO_PA0A_CANTX0;
-    }
-
-    can_set_timestamp_capture_point(CAN1, (checking_for_can1_sof ? 1 : 0));
-    checking_for_can1_sof = !checking_for_can1_sof;
   }
 }
 
@@ -210,15 +164,148 @@ void TC0_Handler() {
         // TODO: figure out why stopTimer fails to work here
         // stopTimer(TC0, 0, TC0_IRQn);
       }
-    } else if (data_length != 0 && frame_bits > 19 && frame_bits <= 19 + data_length * 8) {
+    } else if (data_length != 0 && frame_bits > 20 && frame_bits <= 20 + data_length * 8) {
       frame_data.val = (frame_data.val << 1) | frame_value;
 
-      if (frame_bits == 19 + data_length * 8) {
+      if (frame_bits == 20 + data_length * 8) {
         // hammer_data[0] = 4;
         // hmac_sha256(key, sizeof(key) - 1, frame_data.arr, data_length, hammer_data, 32);
-        startTimer(TC1, 0, TC3_IRQn, (uint32_t)(SPEED * 1000 * 5));
+        startTimer(TC1, 0, TC3_IRQn, frame_sync_delayed_freq);
+        // for (uint8_t a : frame_data.arr) Serial.println(a);
       }
     }
+  }
+}
+
+// runs hammering at ~20% for first data bit; helps synchronize later hammering
+void TC3_Handler() {
+  TC_GetStatus(TC1, 0);
+
+  if (hammer_index < HAMMER_BIT_COUNT) {
+    // start TC6 to fire at first hammered bit (~20% mark)
+    startTimer(TC1, 1, TC4_IRQn, speed_freq);
+    NVIC_SetPriority(TC4_IRQn, 0);
+    startTimer(TC2, 1, TC7_IRQn, hammer_freq);
+
+    reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
+
+    CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
+    // PIN_WRITE(true);
+    hammer_index++;
+    frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
+  }
+
+  stopTimer(TC1, 0, TC3_IRQn);
+}
+
+// handles hammering bits for all data bits
+void TC4_Handler() {
+  TC_GetStatus(TC1, 1);
+
+  if (hammer_index < HAMMER_BIT_COUNT) {
+    // start TC6 to fire 5 times in a bit (~20% mark)
+    startTimer(TC2, 1, TC7_IRQn, hammer_freq);
+
+    reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
+
+    CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
+    // PIN_WRITE(true);
+    hammer_index++;
+    frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
+  } else {
+    // stop timer when no more bits to hammer
+    stopTimer(TC1, 1, TC4_IRQn);
+  }
+}
+
+
+// handles hammering bits for one data bit
+/*
+void TC6_Handler() {
+  TC_GetStatus(TC2, 0);
+
+  startTimer(TC2, 1, TC7_IRQn, hammer_freq);
+
+  // write first hammered bit for data bit
+  // CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
+  PIN_WRITE(true);
+  hammer_index++;
+
+  frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
+
+  // start timer to hammer remaining bits for data bit
+
+  stopTimer(TC2, 0, TC6_IRQn);
+}
+*/
+
+void TC7_Handler() {
+  TC_GetStatus(TC2, 1);
+
+  if (!frame_bit_hammered) {
+    // if bit in frame has not been completely hammered, continue with hammering
+    CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
+    // PIN_WRITE(true);
+    hammer_index++;
+    frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
+  } else {
+    // reset value
+    CAN1_Write(reset_value);
+    // PIN_WRITE(false);
+
+    // stop TC7 (stops hammering for the data bit)
+    stopTimer(TC2, 1, TC7_IRQn);
+  }
+}
+
+void CAN1_Handler() {
+  uint32_t ul_status = CAN1->CAN_SR;  // get status of interrupts
+
+  // runs on second frame bit at ~70%
+  if ((ul_status & CAN_SR_TSTP) && !sending_hammered_frame) {
+    writing_message_to_ecu = checking_for_can1_sof;
+
+    if (checking_for_can1_sof) {
+      // start separate timer for CANTX; fires instantly
+      startTimer(TC0, 1, TC1_IRQn, speed_freq);
+
+      // turn on multiplexing
+      PIOA->PIO_PER = PIO_PA0A_CANTX0;
+
+      // set replicate_frame_queue
+      replicate_frame_value = 0;
+      CAN0_Write(0);
+    } else {
+      stopTimer(TC0, 1, TC1_IRQn);
+      PIOA->PIO_PDR = PIO_PA0A_CANTX0;
+    }
+
+    can_set_timestamp_capture_point(CAN1, (checking_for_can1_sof ? 1 : 0));
+    checking_for_can1_sof = !checking_for_can1_sof;
+  }
+  if (ul_status & CAN_SR_MB0) {  // mailbox 0 event
+    mailbox_int_handler(CAN1, 0);
+  }
+  if (ul_status & CAN_SR_MB1) {  // mailbox 1 event
+    mailbox_int_handler(CAN1, 1);
+  }
+  if (ul_status & CAN_SR_MB2) {  // mailbox 2 event
+    mailbox_int_handler(CAN1, 2);
+  }
+  if (ul_status & CAN_SR_MB3) {  // mailbox 3 event
+    mailbox_int_handler(CAN1, 3);
+  }
+  if (ul_status & CAN_SR_MB4) {  // mailbox 4 event
+    mailbox_int_handler(CAN1, 4);
+  }
+  if (ul_status & CAN_SR_MB5) {  // mailbox 5 event
+    mailbox_int_handler(CAN1, 5);
+  }
+  if (ul_status & CAN_SR_MB6) {  // mailbox 6 event
+    mailbox_int_handler(CAN1, 6);
+  }
+  if (ul_status & CAN_SR_MB7) {  // mailbox 7 event
+    mailbox_int_handler(CAN1, 7);
   }
 }
 
@@ -228,76 +315,6 @@ void TC1_Handler() {
 
   CAN0_Write(replicate_frame_value);
   replicate_frame_value = PIOB->PIO_PDSR & PIO_PB15A_CANRX1;
-}
-
-// runs hammering at ~20% for first data bit; helps synchronize later hammering
-void TC3_Handler() {
-  TC_GetStatus(TC1, 0);
-
-  if (hammer_index < HAMMER_BIT_COUNT) {
-    // starts TC4 at next data bit (~0% mark)
-    startTimer(TC1, 1, TC4_IRQn, SPEED * 1000);
-
-    reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
-    frame_bit_hammered = false;
-
-    // start TC7 to fire 5 times in a bit (~20% mark)
-    startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * 5);
-  }
-
-  // stops first data bit hammering timer
-  stopTimer(TC1, 0, TC3_IRQn);
-}
-
-// handles hammering bits for all data bits
-void TC4_Handler() {
-  TC_GetStatus(TC1, 1);
-
-  if (hammer_index < HAMMER_BIT_COUNT) {
-    // if bits left to hammer, setup hammering for one data bit
-    reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
-    frame_bit_hammered = false;
-
-    // start TC6 to fire 5 times in a bit (~20% mark)
-    startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * 5);
-  } else {
-    // stop timer when no more bits to hammer
-    stopTimer(TC1, 1, TC4_IRQn);
-  }
-}
-
-// handles hammering bits for one data bit
-void TC6_Handler() {
-  TC_GetStatus(TC2, 0);
-
-  // write first hammered bit for data bit
-  CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
-  hammer_index++;
-
-  frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
-
-  // start timer to hammer remaining bits for data bit
-  startTimer(TC2, 1, TC7_IRQn, SPEED * 1000 * 10);
-
-  stopTimer(TC2, 0, TC6_IRQn);
-}
-
-void TC7_Handler() {
-  TC_GetStatus(TC2, 1);
-
-  if (!frame_bit_hammered) {
-    // if bit in frame has not been completely hammered, continue with hammering
-    CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
-    hammer_index++;
-
-    frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
-  } else {
-    // reset value
-    CAN1_Write(reset_value);
-
-    // stop TC7 (stops hammering for the data bit)
-    stopTimer(TC2, 1, TC7_IRQn);
-  }
 }
 
 void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
