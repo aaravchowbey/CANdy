@@ -2,8 +2,8 @@
 
 #define Serial SerialUSB
 
-#define HAMMER_BIT_COUNT 8   // total number of bits to hammer for message frame
-#define HAMMER_SIZE 8        // number of bits to hammer per data bit
+#define HAMMER_BIT_COUNT 4    // total number of bits to hammer for message frame
+#define HAMMER_SIZE 4         // number of bits to hammer per data bit
 #define HAMMER_START 6.f      // percentage
 #define HAMMER_BIT_WIDTH 8.f  // percentage
 
@@ -22,8 +22,11 @@
 #define DATA_LENGTH 8
 const uint8_t data[DATA_LENGTH] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff };
 
-// number of bits until data bits
-volatile uint8_t total_bits = 0;
+// hammer point
+volatile uint32_t hammer_point_freq = 0;
+const uint32_t speed_freq = SPEED * 1000;
+const uint32_t hammer_freq = SPEED * 1000 * (100.f / HAMMER_BIT_WIDTH);
+
 // whether hammering has been initiated for frame
 bool is_hammer_complete = true;
 // bit in frame has been completely hammered
@@ -74,10 +77,7 @@ void CAN0_Handler() {
 
   if (ul_status & CAN_SR_TSTP) {  // timestamp - start of frame (70% of second bit)
     if (!is_hammer_complete) {
-      // total (= 17 + stuff) bits between 2nd frame bit and 1st data bit + ~0.30 (or 70% of bit); SPEED * 1000 / (total_bits + 0.3)
-      // due to startTimer having a delay, frequency is slightly increased
-      #define MOVE_UP 19.f  // microseconds
-      startTimer(TC1, 2, TC5_IRQn, (uint32_t)((1000000.f * SPEED) / (SPEED * -MOVE_UP + 1000.f * (float)(total_bits) + 316.5f + HAMMER_START * 10.f)));
+      startTimer(TC1, 2, TC5_IRQn, hammer_point_freq);
     }
   }
   if (ul_status & CAN_SR_MB0) {  // mailbox 0 event
@@ -106,47 +106,6 @@ void CAN0_Handler() {
   }
 }
 
-/*
-// runs hammering at ~20% for first data bit; helps synchronize later hammering
-void TC3_Handler() {
-  TC_GetStatus(TC1, 0);
-
-  is_hammer_complete = true;
-  hammer_index = 0;
-  if (hammer_index < HAMMER_BIT_COUNT) {
-    // start TC6 to fire at ~20% mark
-    startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * (100 / HAMMER_START));
-    NVIC_SetPriority(TC6_IRQn, 0);
-    // starts TC4 at next data bit (~0% mark)
-    startTimer(TC1, 1, TC4_IRQn, SPEED * 1000);
-
-    // turn on multiplexing
-    PIOA->PIO_PER = PIO_PA0A_CANTX0;
-
-    reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
-    frame_bit_hammered = false;
-  }
-
-  // stops first data bit hammering timer
-  stopTimer(TC1, 0, TC3_IRQn);
-}
-
-// handles hammering bits for all other data bits
-void TC4_Handler() {
-  TC_GetStatus(TC1, 1);
-
-  if (hammer_index < HAMMER_BIT_COUNT) {
-    // start TC6 to fire at ~20% mark
-    startTimer(TC2, 0, TC6_IRQn, SPEED * 1000 * (100 / HAMMER_START));
-    // if bits left to hammer, setup hammering for one data bit
-    reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
-  } else {
-    // stop timer when no more bits to hammer
-    stopTimer(TC1, 1, TC4_IRQn);
-  }
-}
-*/
-
 void TC5_Handler() {
   TC_GetStatus(TC1, 2);
 
@@ -154,9 +113,9 @@ void TC5_Handler() {
   hammer_index = 0;
   if (hammer_index < HAMMER_BIT_COUNT) {
     // start TC6 to fire at ~20% mark for remaining bits
-    startTimer(TC2, 0, TC6_IRQn, SPEED * 1000);
+    startTimer(TC2, 0, TC6_IRQn, speed_freq);
     // start timer to hammer remaining bits for data bit
-    startTimer(TC2, 1, TC7_IRQn, SPEED * 1000 * (100 / HAMMER_BIT_WIDTH));
+    startTimer(TC2, 1, TC7_IRQn, hammer_freq);
 
     reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
 
@@ -178,7 +137,7 @@ void TC6_Handler() {
 
   if (hammer_index < HAMMER_BIT_COUNT) {
     // start timer to hammer remaining bits for data bit
-    startTimer(TC2, 1, TC7_IRQn, SPEED * 1000 * (100 / HAMMER_BIT_WIDTH));
+    startTimer(TC2, 1, TC7_IRQn, hammer_freq);
 
     // turn on multiplexing
     PIOA->PIO_PER = PIO_PA0A_CANTX0;
@@ -332,18 +291,21 @@ void sendFrame() {
         CAN0->CAN_MB[mb].CAN_MDH = (uint32_t)(outgoing.data.value >> 32);
 
         // calculate bits in first part of frame
-        uint8_t tb = 17;
+        uint8_t total_bits = 17;
         uint32_t frame_head = (uint32_t)outgoing.length | (uint32_t)(outgoing.id << 7);  // 0b0[ID]000[DLC]
 
         // sum number of stuff bits for outgoing frame
         for (int8_t i = 14; i >= 0; i--) {
           if ((frame_head & (0b11111 << i)) == 0) {
-            tb++;
+            total_bits++;
             i -= 4;
           }
         }
 
-        total_bits = tb;
+        // total (= 17 + stuff) bits between 2nd frame bit and 1st data bit + ~0.30 (or 70% of bit); SPEED * 1000 / (total_bits + 0.3)
+        // due to startTimer having a delay, frequency is slightly increased
+        #define MOVE_UP 10.5f  // microseconds
+        hammer_point_freq = (uint32_t)((1000000.f * SPEED) / (SPEED * -MOVE_UP + 1000.f * (float)(total_bits) + 316.5f + HAMMER_START * 10.f));
 
         // generate HMAC for message
         // hmac_sha256(key, sizeof(key) - 1, outgoing.data.bytes, outgoing.length, hammer_data, 32);
