@@ -77,7 +77,9 @@ void CAN0_Handler() {
 
   if (ul_status & CAN_SR_TSTP) {  // timestamp - start of frame (70% of second bit)
     if (!is_hammer_complete) {
-      startTimer(TC1, 2, TC5_IRQn, hammer_point_freq);
+      is_hammer_complete = true;
+      hammer_index = 0;
+      startTimer(TC0, 0, TC0_IRQn, hammer_point_freq);
     }
   }
   if (ul_status & CAN_SR_MB0) {  // mailbox 0 event
@@ -106,16 +108,14 @@ void CAN0_Handler() {
   }
 }
 
-void TC5_Handler() {
-  TC_GetStatus(TC1, 2);
+void TC0_Handler() {
+  TC_GetStatus(TC0, 0);
 
-  is_hammer_complete = true;
-  hammer_index = 0;
   if (hammer_index < HAMMER_BIT_COUNT) {
-    // start TC6 to fire at ~20% mark for remaining bits
-    startTimer(TC2, 0, TC6_IRQn, speed_freq);
+    // start TC3 to fire at ~20% mark for remaining bits
+    startTimer(TC1, 0, TC3_IRQn, speed_freq);
     // start timer to hammer remaining bits for data bit
-    startTimer(TC2, 1, TC7_IRQn, hammer_freq);
+    startTimer(TC2, 0, TC6_IRQn, hammer_freq);
 
     reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
 
@@ -128,16 +128,16 @@ void TC5_Handler() {
     frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
   }
 
-  stopTimer(TC1, 2, TC5_IRQn);
+  stopTimer(TC0, 0, TC0_IRQn);
 }
 
 // handles hammering one bit and sets up hammering for one data bit
-void TC6_Handler() {
-  TC_GetStatus(TC2, 0);
+void TC3_Handler() {
+  TC_GetStatus(TC1, 0);
 
   if (hammer_index < HAMMER_BIT_COUNT) {
     // start timer to hammer remaining bits for data bit
-    startTimer(TC2, 1, TC7_IRQn, hammer_freq);
+    startTimer(TC2, 0, TC6_IRQn, hammer_freq);
 
     // turn on multiplexing
     PIOA->PIO_PER = PIO_PA0A_CANTX0;
@@ -147,13 +147,13 @@ void TC6_Handler() {
     hammer_index++;
 
     frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
+  } else {
+    stopTimer(TC1, 0, TC3_IRQn);
   }
-
-  stopTimer(TC2, 0, TC6_IRQn);
 }
 
-void TC7_Handler() {
-  TC_GetStatus(TC2, 1);
+void TC6_Handler() {
+  TC_GetStatus(TC2, 0);
 
   if (!frame_bit_hammered) {
     // if bit in frame has not been completely hammered, continue with hammering
@@ -165,8 +165,8 @@ void TC7_Handler() {
     // reset value
     CANdy_Write(reset_value);
 
-    // stop TC7 (stops hammering for the data bit)
-    stopTimer(TC2, 1, TC7_IRQn);
+    // stop TC6 (stops hammering for the data bit)
+    stopTimer(TC2, 0, TC6_IRQn);
 
     // turn off multiplexing
     PIOA->PIO_PDR = PIO_PA0A_CANTX0;
