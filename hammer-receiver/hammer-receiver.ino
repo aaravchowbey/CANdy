@@ -2,11 +2,11 @@
 
 #define SPEED CAN_BPS_50K
 
-#define HAMMER_BIT_COUNT 4       // total number of bits to hammer for message frame
+#define HAMMER_BIT_COUNT 8       // total number of bits to hammer for message frame
 #define HAMMER_SIZE 1            // number of bits to hammer per data bit
 #define HAMMER_START 20.f        // percentage
 #define HAMMER_BIT_WIDTH 20.f    // percentage
-#define FRAME_DELAY_AMOUNT 7.f   // percentage
+#define FRAME_DELAY_AMOUNT 4.f   // percentage
 
 const uint32_t speed_freq = SPEED * 1000;
 const uint32_t hammer_freq = SPEED * 1000 * (100.f / HAMMER_BIT_WIDTH);
@@ -138,7 +138,7 @@ void TC3_Handler() {
   if (hammer_index < HAMMER_BIT_COUNT) {
     startTimer(TC1, 1, TC4_IRQn, speed_freq);
     startTimer(TC2, 0, TC6_IRQn, hammer_freq);
-    hammer_data[hammer_index / 8] = (uint8_t)((PIOA->PIO_PDSR & PIO_PA1A_CANRX0) ? 1 : 0) << (hammer_index % 8);
+    hammer_data[hammer_index / 8] |= (uint8_t)((PIOA->PIO_PDSR & PIO_PA1A_CANRX0) ? 1 : 0) << (hammer_index % 8);
     hammer_index++;
     frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
   } else {
@@ -272,7 +272,7 @@ void loop() {
   if (PIOB->PIO_PDSR & PIO_PB26) {
     PIOB->PIO_CODR = PIO_PB26;
 
-    for (uint8_t i = 0; i < HAMMER_BIT_COUNT / 8 + 1; i++) {
+    for (uint8_t i = 0; i < (HAMMER_BIT_COUNT + 1) / 8; i++) {
       Serial.println(hammer_data[i], HEX);
     }
 
