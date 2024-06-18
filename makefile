@@ -21,7 +21,15 @@ sender2:
 	$(PRINT_MESSAGE)
 	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) --build-property "compiler.cpp.extra_flags=\"-DSENDER2\"" $(call get_board_flags, $(SENDER2)) sender
 
+receive-test:
+	$(PRINT_MESSAGE)
+	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(SENDER2)) $@
+
 receiver:
+	$(PRINT_MESSAGE)
+	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(RECEIVER)) $@
+
+hammer-receiver:
 	$(PRINT_MESSAGE)
 	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(RECEIVER)) $@
 
@@ -59,4 +67,4 @@ monitor:
 monitor-uno:
 	$(ARDUINO_CLI) monitor $(call get_board_flags, .port.properties.pid == "0x0043")
 
-.PHONY: all sender receiver hammer hammer2 hammer-integrated due_attacker_example due_michican_defender_example uno uno-send monitor monitor-uno
+.PHONY: all sender receiver hammer-receiver hammer hammer2 hammer-integrated due_attacker_example due_michican_defender_example uno uno-send monitor monitor-uno receive-test

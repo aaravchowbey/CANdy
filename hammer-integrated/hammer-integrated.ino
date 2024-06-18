@@ -2,10 +2,10 @@
 
 #define Serial SerialUSB
 
-#define HAMMER_BIT_COUNT 4    // total number of bits to hammer for message frame
-#define HAMMER_SIZE 4         // number of bits to hammer per data bit
-#define HAMMER_START 6.f      // percentage
-#define HAMMER_BIT_WIDTH 8.f  // percentage
+#define HAMMER_BIT_COUNT 8     // total number of bits to hammer for message frame
+#define HAMMER_SIZE 1          // number of bits to hammer per data bit
+#define HAMMER_START 20.f      // percentage
+#define HAMMER_BIT_WIDTH 20.f  // percentage
 
 #define SPEED CAN_BPS_50K
 
@@ -35,7 +35,7 @@ volatile bool frame_bit_hammered = false;
 volatile bool reset_value = false;
 
 // data bits to hammer
-uint8_t hammer_data[32] = { 0b01010101 };
+uint8_t hammer_data[32] = { 0xff, 0x00, 0xff, 0x00 };
 // current index of hammer_data
 volatile uint8_t hammer_index = 0;
 
@@ -302,9 +302,9 @@ void sendFrame() {
           }
         }
 
-        // total (= 17 + stuff) bits between 2nd frame bit and 1st data bit + ~0.30 (or 70% of bit); SPEED * 1000 / (total_bits + 0.3)
-        // due to startTimer having a delay, frequency is slightly increased
-        #define MOVE_UP 10.5f  // microseconds
+// total (= 17 + stuff) bits between 2nd frame bit and 1st data bit + ~0.30 (or 70% of bit); SPEED * 1000 / (total_bits + 0.3)
+// due to startTimer having a delay, frequency is slightly increased
+#define MOVE_UP 10.5f  // microseconds
         hammer_point_freq = (uint32_t)((1000000.f * SPEED) / (SPEED * -MOVE_UP + 1000.f * (float)(total_bits) + 316.5f + HAMMER_START * 10.f));
 
         // generate HMAC for message
