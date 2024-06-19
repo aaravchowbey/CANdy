@@ -5,8 +5,8 @@
 #define HAMMER_BIT_COUNT 8       // total number of bits to hammer for message frame
 #define HAMMER_SIZE 1            // number of bits to hammer per data bit
 #define HAMMER_START 20.f        // percentage
-#define HAMMER_BIT_WIDTH 20.f    // percentage
-#define FRAME_DELAY_AMOUNT 4.f   // percentage
+#define HAMMER_BIT_WIDTH 30.f    // percentage
+#define FRAME_DELAY_AMOUNT 3.f  // percentage
 
 const uint32_t speed_freq = SPEED * 1000;
 const uint32_t hammer_freq = SPEED * 1000 * (100.f / HAMMER_BIT_WIDTH);
@@ -142,7 +142,7 @@ void TC3_Handler() {
     hammer_index++;
     frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
   } else {
-    PIOB->PIO_SODR = PIO_PB26;
+    printData();
   }
 
   stopTimer(TC1, 0, TC3_IRQn);
@@ -158,7 +158,7 @@ void TC4_Handler() {
     hammer_index++;
     frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
   } else {
-    PIOB->PIO_SODR = PIO_PB26;
+    printData();
     stopTimer(TC1, 1, TC4_IRQn);
   }
 }
@@ -268,16 +268,15 @@ void setup() {
   can_enable_interrupt(CAN0, CAN_IER_MB0);
 }
 
-void loop() {
-  if (PIOB->PIO_PDSR & PIO_PB26) {
-    PIOB->PIO_CODR = PIO_PB26;
-
-    for (uint8_t i = 0; i < (HAMMER_BIT_COUNT + 1) / 8; i++) {
-      Serial.println(hammer_data[i], HEX);
-    }
-
-    for (uint8_t i = 0; i < 32; i++) {
-      hammer_data[i] = 0;
-    }
+void printData() {
+  for (uint8_t i = 0; i < (HAMMER_BIT_COUNT + 1) / 8; i++) {
+    Serial.println(hammer_data[i], HEX);
   }
+
+  for (uint8_t i = 0; i < 32; i++) {
+    hammer_data[i] = 0;
+  }
+}
+
+void loop() {
 }

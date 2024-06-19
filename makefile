@@ -11,7 +11,7 @@ all: modem
 
 modem: hammer2 sender sender2
 
-integrated: hammer-integrated receiver
+integrated: hammer-integrated hammer-receiver
 
 sender:
 	$(PRINT_MESSAGE)

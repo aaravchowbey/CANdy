@@ -5,7 +5,7 @@
 #define HAMMER_BIT_COUNT 8     // total number of bits to hammer for message frame
 #define HAMMER_SIZE 1          // number of bits to hammer per data bit
 #define HAMMER_START 20.f      // percentage
-#define HAMMER_BIT_WIDTH 20.f  // percentage
+#define HAMMER_BIT_WIDTH 30.f  // percentage
 
 #define SPEED CAN_BPS_50K
 
@@ -35,7 +35,7 @@ volatile bool frame_bit_hammered = false;
 volatile bool reset_value = false;
 
 // data bits to hammer
-uint8_t hammer_data[32] = { 0xff, 0x00, 0xff, 0x00 };
+uint8_t hammer_data[32] = { 0xc0, 0x00, 0xff, 0x00 };
 // current index of hammer_data
 volatile uint8_t hammer_index = 0;
 
