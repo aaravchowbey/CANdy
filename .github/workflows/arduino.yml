@@ -20,6 +20,7 @@ jobs:
             - receiver
             - hammer2
             - hammer-integrated
+            - hammer-receiver
       - uses: actions/upload-artifact@v4
         with:
           name: sketches-reports
