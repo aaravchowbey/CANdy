@@ -4,6 +4,7 @@ COMPILE_FLAGS = --warnings all --upload # --export-binaries --optimize-for-debug
 define get_board_flags
 	$(shell arduino-cli board list --json | jq -r '.detected_ports[] | select($1) | "--fqbn \(.matching_boards[0].fqbn) --port \(.port.address)"')
 endef
+BUILD_FLAGS = ""
 
 include config.mk
 
@@ -31,7 +32,7 @@ receiver:
 
 hammer-receiver:
 	$(PRINT_MESSAGE)
-	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(RECEIVER)) $@
+	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) --build-property $(BUILD_FLAGS) $(call get_board_flags, $(RECEIVER)) $@
 
 hammer:
 	$(PRINT_MESSAGE)

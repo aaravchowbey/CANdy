@@ -6,11 +6,12 @@
 #define HAMMER_SIZE 1            // number of bits to hammer per data bit
 #define HAMMER_START 20.f        // percentage
 #define HAMMER_BIT_WIDTH 30.f    // percentage
-#define FRAME_DELAY_AMOUNT 3.f  // percentage
+
+#define FRAME_DELAY_AMOUNT 0.0f
 
 const uint32_t speed_freq = SPEED * 1000;
 const uint32_t hammer_freq = SPEED * 1000 * (100.f / HAMMER_BIT_WIDTH);
-const uint32_t frame_sync_delayed_freq = SPEED * 1000 * (100.f / (HAMMER_START + HAMMER_BIT_WIDTH * 0.7 + FRAME_DELAY_AMOUNT));
+const uint32_t frame_sync_delayed_freq = SPEED * 1000 * (100.f / (HAMMER_START + HAMMER_BIT_WIDTH * 0.7f + FRAME_DELAY_AMOUNT));
 
 volatile bool frame_value = false;
 volatile uint8_t frame_queue = 0;
@@ -23,11 +24,26 @@ volatile bool frame_bit_hammered = false;
 
 volatile uint8_t data_length = 8;
 
+// uint64_t bus_queue = UINT64_MAX;
+uint64_t bus_queue[2] = {UINT64_MAX, UINT64_MAX};
+bool sof = false;
+
+// #define SAMPLING_SPEED 11
+
 // #define IS_MODEM
 
 #define PIN_WRITE(value) \
   do { \
     (value) ? (PIOB->PIO_SODR = PIO_PB26) : (PIOB->PIO_CODR = PIO_PB26); \
+  } while (0);
+
+#define PIN_ON \
+  do { \
+    PIOB->PIO_SODR = PIO_PB26; \
+  } while (0);
+#define PIN_OFF \
+  do { \
+    PIOB->PIO_CODR = PIO_PB26; \
   } while (0);
 
 void mailbox_int_handler(uint8_t mb) {
@@ -51,17 +67,17 @@ void CAN0_Handler() {
   // get status of interrupts
   uint32_t ul_status = CAN0->CAN_SR;
 
-  if (ul_status & CAN_SR_TSTP) {  // timestamp - start of frame (70% of second bit)
-    startTimer(TC0, 0, TC0_IRQn, speed_freq);
-    // set frame_queue
-    frame_value = 0;
-    frame_queue = 0b11111100 | (uint8_t)((PIOA->PIO_PDSR & PIO_PA1A_CANRX0) ? 1 : 0);
-
-    // reset values
-    bits_after_prev_stuff = 2;
-    frame_bits = 2;
-    hammer_index = 0;
-  }
+  // if (ul_status & CAN_SR_TSTP) {  // timestamp - start of frame (70% of second bit)
+  //   startTimer(TC0, 0, TC0_IRQn, speed_freq);
+  //   // set frame_queue
+  //   frame_value = 0;
+  //   frame_queue = 0b11111100 | (uint8_t)((PIOA->PIO_PDSR & PIO_PA1A_CANRX0) ? 1 : 0);
+  //
+  //   // reset values
+  //   bits_after_prev_stuff = 2;
+  //   frame_bits = 2;
+  //   hammer_index = 0;
+  // }
   if (ul_status & CAN_SR_MB0) {  // mailbox 0 event
     mailbox_int_handler(0);
   }
@@ -85,6 +101,60 @@ void CAN0_Handler() {
   }
   if (ul_status & CAN_SR_MB7) {  // mailbox 7 event
     mailbox_int_handler(7);
+  }
+}
+
+void TC1_Handler() {
+  TC_GetStatus(TC0, 1);
+
+  bool value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
+
+  // check if bus_queue contains sof
+  if (!sof) {
+    // if not sof, add to bus_queue
+    #if SAMPLING_SPEED < 6
+    bus_queue = ((bus_queue & 0x7FFFFFFFFFFFFFFF) << 1) | (uint64_t)(value ? 1 : 0);
+    #else
+    bus_queue[0] = ((bus_queue[0] & 0x7FFFFFFFFFFFFFFF) << 1) | ((bus_queue[1] & 0x8000000000000000) >> 63);
+    bus_queue[1] = ((bus_queue[1] & 0x7FFFFFFFFFFFFFFF) << 1) | (uint64_t)(value ? 1 : 0);
+    #endif;
+
+    #if SAMPLING_SPEED == 11
+    if ((bus_queue[0] & 0b111111111111111111111111111111111111111111111111111111111) == 0b111111111111111111111111111111111111111111111111111111111 &&
+        bus_queue[1] == 0b1111111111111111111111111111111111111111111111111111100000000000) {
+    #elif SAMPLING_SPEED == 10
+    if ((bus_queue[0] & 0b1111111111111111111111111111111111111111111111) == 0b1111111111111111111111111111111111111111111111 &&
+        bus_queue[1] == 0b1111111111111111111111111111111111111111111111111111110000000000) {
+    #elif SAMPLING_SPEED == 9
+    if ((bus_queue[0] & 0b11111111111111111111111111111111111) == 0b11111111111111111111111111111111111 &&
+        bus_queue[1] == 0b1111111111111111111111111111111111111111111111111111111000000000) {
+    #elif SAMPLING_SPEED == 8
+    if ((bus_queue[0] & 0b111111111111111111111111) == 0b111111111111111111111111 &&
+        bus_queue[1] == 0b1111111111111111111111111111111111111111111111111111111100000000) {
+    #elif SAMPLING_SPEED == 7
+    if ((bus_queue[0] & 0b1111111111111) == 0b1111111111111 &&
+        bus_queue[1] == 0b1111111111111111111111111111111111111111111111111111111110000000) {
+    #elif SAMPLING_SPEED == 6
+    if ((bus_queue[0] & 0b11) == 0b11 &&
+        bus_queue[1] == 0b1111111111111111111111111111111111111111111111111111111111000000) {
+    #elif SAMPLING_SPEED == 5
+    if ((bus_queue & 0x7FFFFFFFFFFFFF) == 0x7FFFFFFFFFFFE0) {
+    #endif
+      sof = true;
+    }
+  } else {
+    startTimer(TC0, 0, TC0_IRQn, speed_freq);
+    stopTimer(TC0, 1, TC1_IRQn);
+    sof = false;
+
+    // set frame_queue
+    frame_value = 0;
+    frame_queue = 0b11111110;// | (uint8_t)(value ? 1 : 0);
+
+    // reset values
+    bits_after_prev_stuff = 1;
+    frame_bits = 1;
+    hammer_index = 0;
   }
 }
 
@@ -138,6 +208,7 @@ void TC3_Handler() {
   if (hammer_index < HAMMER_BIT_COUNT) {
     startTimer(TC1, 1, TC4_IRQn, speed_freq);
     startTimer(TC2, 0, TC6_IRQn, hammer_freq);
+    // PIN_ON;
     hammer_data[hammer_index / 8] |= (uint8_t)((PIOA->PIO_PDSR & PIO_PA1A_CANRX0) ? 1 : 0) << (hammer_index % 8);
     hammer_index++;
     frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
@@ -154,6 +225,7 @@ void TC4_Handler() {
 
   if (hammer_index < HAMMER_BIT_COUNT) {
     startTimer(TC2, 0, TC6_IRQn, hammer_freq);
+    // PIN_ON;
     hammer_data[hammer_index / 8] |= (uint8_t)((PIOA->PIO_PDSR & PIO_PA1A_CANRX0) ? 1 : 0) << (hammer_index % 8);
     hammer_index++;
     frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
@@ -172,6 +244,7 @@ void TC6_Handler() {
     hammer_index++;
     frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
   } else {
+    // PIN_OFF;
     stopTimer(TC2, 0, TC6_IRQn);
   }
 }
@@ -228,8 +301,8 @@ void setup() {
 
   // enable only timestamp interrupt and set to fire at SOF
   can_disable_interrupt(CAN0, CAN_DISABLE_ALL_INTERRUPT_MASK);
-  can_enable_interrupt(CAN0, CAN_SR_TSTP);
-  can_set_timestamp_capture_point(CAN0, 0);
+  // can_enable_interrupt(CAN0, CAN_SR_TSTP);
+  // can_set_timestamp_capture_point(CAN0, 0);
 
   // enable CAN0 interrupt handler
   NVIC_EnableIRQ(CAN0_IRQn);
@@ -266,6 +339,9 @@ void setup() {
   CAN0->CAN_MB[0].CAN_MID &= ~CAN_MAM_MIDE;
   CAN0->CAN_MB[0].CAN_MID = CAN_MID_MIDvA(0);
   can_enable_interrupt(CAN0, CAN_IER_MB0);
+
+  startTimer(TC0, 1, TC1_IRQn, speed_freq * SAMPLING_SPEED);
+  NVIC_SetPriority(TC1_IRQn, 0);
 }
 
 void printData() {
@@ -276,6 +352,10 @@ void printData() {
   for (uint8_t i = 0; i < 32; i++) {
     hammer_data[i] = 0;
   }
+
+  (PIOB->PIO_PDSR & PIO_PB27) ? PIOB->PIO_CODR = PIO_PB27 : PIOB->PIO_SODR = PIO_PB27;
+
+  startTimer(TC0, 1, TC1_IRQn, speed_freq * SAMPLING_SPEED);
 }
 
 void loop() {

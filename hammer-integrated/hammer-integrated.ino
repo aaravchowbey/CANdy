@@ -323,7 +323,7 @@ void sendFrame() {
 }
 
 void loop() {
-  if (millis() - last_time > 1000) {
+  if (millis() - last_time > 100) {
     last_time = millis();
     sendFrame();
 
