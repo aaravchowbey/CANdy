@@ -22,3 +22,5 @@
 !/hammer-integrated/hammer-integrated.ino
 !/hammer-receiver/
 !/hammer-receiver/hammer-receiver.ino
+
+!/run-*-test.pl
