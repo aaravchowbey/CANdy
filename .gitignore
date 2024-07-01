@@ -20,5 +20,7 @@
 !/hammer-integrated/hammer-integrated.ino
 !/hammer-receiver/
 !/hammer-receiver/hammer-receiver.ino
+!/hmac-speed/
+!/hmac-speed/hmac-speed.ino
 
 !/run-*-test.pl
