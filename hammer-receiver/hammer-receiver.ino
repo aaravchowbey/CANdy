@@ -7,7 +7,7 @@
 #define HAMMER_START 20.f        // percentage
 #define HAMMER_BIT_WIDTH 30.f    // percentage
 
-#define FRAME_DELAY_AMOUNT 0.0f
+// #define FRAME_DELAY_AMOUNT 0.0f
 
 const uint32_t speed_freq = SPEED * 1000;
 const uint32_t hammer_freq = SPEED * 1000 * (100.f / HAMMER_BIT_WIDTH);
@@ -117,7 +117,7 @@ void TC1_Handler() {
     #else
     bus_queue[0] = ((bus_queue[0] & 0x7FFFFFFFFFFFFFFF) << 1) | ((bus_queue[1] & 0x8000000000000000) >> 63);
     bus_queue[1] = ((bus_queue[1] & 0x7FFFFFFFFFFFFFFF) << 1) | (uint64_t)(value ? 1 : 0);
-    #endif;
+    #endif
 
     #if SAMPLING_SPEED == 11
     if ((bus_queue[0] & 0b111111111111111111111111111111111111111111111111111111111) == 0b111111111111111111111111111111111111111111111111111111111 &&
