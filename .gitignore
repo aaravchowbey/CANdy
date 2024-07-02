@@ -22,5 +22,7 @@
 !/hammer-receiver/hammer-receiver.ino
 !/hmac-speed/
 !/hmac-speed/hmac-speed.ino
+!/esp32-timer/
+!/esp32-timer/esp32-timer.ino
 
 !/run-*-test.pl

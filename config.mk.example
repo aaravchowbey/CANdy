@@ -1,3 +1,5 @@
 SENDER   := .port.properties.serialNumber == "SERIAL_NUMBER"
 RECEIVER := .port.properties.serialNumber == "SERIAL_NUMBER" or .port.properties.pid == "0x003e"
 HAMMER   := .port.properties.serialNumber == "SERIAL_NUMBER"
+UNO      := .port.properties.serialNumber == "SERIAL_NUMBER"
+ESP      := .matching_boards[0].fqbn == "esp32:esp32:node32s"
