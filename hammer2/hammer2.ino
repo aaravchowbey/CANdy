@@ -3,11 +3,12 @@
 
 #define SPEED CAN_BPS_50K
 
-#define HAMMER_BIT_COUNT 12      // total number of bits to hammer for message frame
-#define HAMMER_SIZE 4            // number of bits to hammer per data bit
+#define HAMMER_BIT_COUNT 8      // total number of bits to hammer for message frame
+#define HAMMER_SIZE 1            // number of bits to hammer per data bit
 #define HAMMER_START 20.f        // percentage
-#define HAMMER_BIT_WIDTH 8.f     // percentage
-#define FRAME_DELAY_AMOUNT 40.f  // percentage
+#define HAMMER_BIT_WIDTH 30.f     // percentage
+
+#define FRAME_DELAY_AMOUNT 35.f  // percentage
 
 #define PIN_WRITE(value) \
   do { \
@@ -37,7 +38,7 @@ volatile uint8_t frame_queue = 0;
 volatile uint8_t bits_after_prev_stuff = 0, frame_bits = 0;
 
 // data bits to hammer
-uint8_t hammer_data[32] = { 0b01010101, 0, 0, 0, 0 };
+uint8_t hammer_data[32] = { 0xc0, 0, 0, 0, 0 };
 const unsigned char key[] = "super-secret-key";
 
 // current index of hammer_data
@@ -88,8 +89,10 @@ void CAN0_Handler() {
     if (checking_for_sof) {
       // fires instantly? TODO: find out why it fires instantly
       startTimer(TC0, 0, TC0_IRQn, speed_freq);
+      NVIC_SetPriority(TC0_IRQn, 0);
 
       PIOB->PIO_PER = PIO_PB14A_CANTX1;
+      CAN1_Write(0);
 
       // set frame_queue
       frame_value = 0;
@@ -141,37 +144,36 @@ void TC0_Handler() {
   CAN1_Write(frame_value);
   frame_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
 
-  if (bits_after_prev_stuff >= 5 && ((frame_value == 0 && (frame_queue & 0b11111) == 0b11111) || (frame_value == 1 && (frame_queue & 0b11111) == 0))) {
+  if (bits_after_prev_stuff >= 5 && !(frame_value == (frame_queue & 0b11111))) {
     // if stuff bit, reset frame_samples
     bits_after_prev_stuff = 0;
   } else {
     // if not stuff bit, add to frame_queue
-    frame_queue = ((frame_queue & 0b1111111) << 1) | frame_value;
+    frame_queue = ((frame_queue & 0b1111111) << 1) | (uint8_t)frame_value;
 
     // increment counters
     bits_after_prev_stuff++;
     frame_bits++;
 
-    if (frame_bits == 15 && (frame_value & 0b111) != 0) {
-      // TODO: figure out why stopTimer fails to work here
-      // stopTimer(TC0, 0, TC0_IRQn);
-    } else if (frame_bits == 19) {
-      if ((frame_queue & 0b1111) != 0) {
-        data_length = frame_queue & 0b1111;
-        frame_data.val = 0;
-      } else {
-        data_length = 0;
-        // TODO: figure out why stopTimer fails to work here
-        // stopTimer(TC0, 0, TC0_IRQn);
-      }
-    } else if (data_length != 0 && frame_bits > 20 && frame_bits <= 20 + data_length * 8) {
-      frame_data.val = (frame_data.val << 1) | frame_value;
+    // if (frame_bits == 15 && (frame_value & 0b111) != 0) {
+    //   // TODO: figure out why stopTimer fails to work here
+    //   // stopTimer(TC0, 0, TC0_IRQn);
+    // } else if (frame_bits == 19) {
+    //   // FIX: storing data length results in error!
+    //   // data_length = frame_queue & 0b1111;
+    //   // if (data_length == 0) {
+    //   //   stopTimer(TC0, 0, TC0_IRQn);
+    //   // }
+    // } else 
+    if (frame_bits >= 20 && frame_bits <= 20 + data_length * 8) {
+      frame_data.val = (frame_data.val << 1) | (uint8_t)frame_value;
 
       if (frame_bits == 20 + data_length * 8) {
         // hammer_data[0] = 4;
         // hmac_sha256(key, sizeof(key) - 1, frame_data.arr, data_length, hammer_data, 32);
+
+        // start one bit after!
         startTimer(TC1, 0, TC3_IRQn, frame_sync_delayed_freq);
-        // for (uint8_t a : frame_data.arr) Serial.println(a);
       }
     }
   }
@@ -184,13 +186,12 @@ void TC3_Handler() {
   if (hammer_index < HAMMER_BIT_COUNT) {
     // start TC6 to fire at first hammered bit (~20% mark)
     startTimer(TC1, 1, TC4_IRQn, speed_freq);
-    NVIC_SetPriority(TC4_IRQn, 0);
     startTimer(TC2, 1, TC7_IRQn, hammer_freq);
+
+    CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
 
     reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
 
-    CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
-    // PIN_WRITE(true);
     hammer_index++;
     frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
   }
@@ -209,7 +210,6 @@ void TC4_Handler() {
     reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
 
     CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
-    // PIN_WRITE(true);
     hammer_index++;
     frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
   } else {
@@ -251,7 +251,6 @@ void TC7_Handler() {
   } else {
     // reset value
     CAN1_Write(reset_value);
-    // PIN_WRITE(false);
 
     // stop TC7 (stops hammering for the data bit)
     stopTimer(TC2, 1, TC7_IRQn);
