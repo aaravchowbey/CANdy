@@ -72,4 +72,8 @@ monitor:
 monitor-uno:
 	$(ARDUINO_CLI) monitor $(call get_board_flags, .port.properties.pid == "0x0043")
 
-.PHONY: all sender receiver hammer-receiver hammer hammer2 hammer-integrated due_attacker_example due_michican_defender_example uno uno-send monitor monitor-uno receive-test esp32-timer
+hmac-speed:
+	$(PRINT_MESSAGE)
+	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) $(call get_board_flags, $(SENDER)) $@
+
+.PHONY: all sender receiver hammer-receiver hammer hammer2 hammer-integrated due_attacker_example due_michican_defender_example uno uno-send monitor monitor-uno receive-test hmac-speed esp32-timer
