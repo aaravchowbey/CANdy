@@ -2,16 +2,23 @@
 
 #define SPEED CAN_BPS_50K
 
-#define HAMMER_BIT_COUNT 8       // total number of bits to hammer for message frame
-#define HAMMER_SIZE 1            // number of bits to hammer per data bit
-#define HAMMER_START 20.f        // percentage
-#define HAMMER_BIT_WIDTH 30.f    // percentage
+#define HAMMER_BIT_COUNT 8     // total number of bits to hammer for message frame
+#define HAMMER_SIZE 1          // number of bits to hammer per data bit
+#define HAMMER_START 20.f      // percentage
+#define HAMMER_BIT_WIDTH 30.f  // percentage
 
-// #define FRAME_DELAY_AMOUNT 0.0f
+#define IS_MODEM
+
+#define SAMPLING_SPEED 10
 
 const uint32_t speed_freq = SPEED * 1000;
 const uint32_t hammer_freq = SPEED * 1000 * (100.f / HAMMER_BIT_WIDTH);
-const uint32_t frame_sync_delayed_freq = SPEED * 1000 * (100.f / (HAMMER_START + HAMMER_BIT_WIDTH * 0.7f + FRAME_DELAY_AMOUNT));
+
+#ifndef IS_MODEM
+const uint32_t frame_sync_delayed_freq = SPEED * 1000 * (100.f / (HAMMER_START + HAMMER_BIT_WIDTH * 0.7f + -1.7f));
+#else
+const uint32_t frame_sync_delayed_freq = SPEED * 1000 * (100.f / (HAMMER_START + HAMMER_BIT_WIDTH * 0.7f + 40.f));
+#endif
 
 volatile bool frame_value = false;
 volatile uint8_t frame_queue = 0;
@@ -29,8 +36,6 @@ uint64_t bus_queue[2] = {UINT64_MAX, UINT64_MAX};
 bool sof = false;
 
 // #define SAMPLING_SPEED 11
-
-// #define IS_MODEM
 
 #define PIN_WRITE(value) \
   do { \
@@ -149,7 +154,7 @@ void TC1_Handler() {
 
     // set frame_queue
     frame_value = 0;
-    frame_queue = 0b11111110;// | (uint8_t)(value ? 1 : 0);
+    frame_queue = 0b11111110; // | (uint8_t)(value ? 1 : 0);
 
     // reset values
     bits_after_prev_stuff = 1;
