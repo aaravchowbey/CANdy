@@ -32,7 +32,7 @@ receiver:
 
 hammer-receiver:
 	$(PRINT_MESSAGE)
-	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) --build-property $(BUILD_FLAGS) $(call get_board_flags, $(RECEIVER)) $@
+	@$(ARDUINO_CLI) compile $(COMPILE_FLAGS) --build-property $(BUILD_FLAGS) $(call get_board_flags, $(SENDER2)) $@
 
 hammer:
 	$(PRINT_MESSAGE)

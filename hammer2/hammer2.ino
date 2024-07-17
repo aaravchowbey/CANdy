@@ -8,7 +8,7 @@
 #define HAMMER_START 20.f        // percentage
 #define HAMMER_BIT_WIDTH 30.f     // percentage
 
-#define FRAME_DELAY_AMOUNT 35.f  // percentage
+#define FRAME_DELAY_AMOUNT 10.f  // percentage
 
 #define PIN_WRITE(value) \
   do { \
@@ -38,7 +38,7 @@ volatile uint8_t frame_queue = 0;
 volatile uint8_t bits_after_prev_stuff = 0, frame_bits = 0;
 
 // data bits to hammer
-uint8_t hammer_data[32] = { 0xc0, 0, 0, 0, 0 };
+uint8_t hammer_data[32] = { 0x00, 0, 0, 0, 0 };
 const unsigned char key[] = "super-secret-key";
 
 // current index of hammer_data
@@ -87,28 +87,28 @@ void CAN0_Handler() {
     sending_hammered_frame = checking_for_sof;
 
     if (checking_for_sof) {
-      // fires instantly? TODO: find out why it fires instantly
-      startTimer(TC0, 0, TC0_IRQn, speed_freq);
-      NVIC_SetPriority(TC0_IRQn, 0);
+      // store value initially!
+      frame_value = (bool)(PIOA->PIO_PDSR & PIO_PA1A_CANRX0);
+      frame_queue = 0b11111100 | (uint8_t)(frame_value ? 1 : 0);
 
+      startTimer(TC0, 0, TC0_IRQn, speed_freq, TC_CMR_TCCLKS_TIMER_CLOCK2);
+
+      // write start-of-frame bit
       PIOB->PIO_PER = PIO_PB14A_CANTX1;
       CAN1_Write(0);
-
-      // set frame_queue
-      frame_value = 0;
-      frame_queue = 0b11111110;
 
       // reset values
       bits_after_prev_stuff = 1;
       frame_bits = 1;
       hammer_index = 0;
+      can_set_timestamp_capture_point(CAN0, 1);
     } else {
       stopTimer(TC0, 0, TC0_IRQn);
       PIOB->PIO_PDR = PIO_PB14A_CANTX1;
       PIN_WRITE(0);
+      can_set_timestamp_capture_point(CAN0, 0);
     }
 
-    can_set_timestamp_capture_point(CAN0, (checking_for_sof ? 1 : 0));
     checking_for_sof = !checking_for_sof;
   }
   if (ul_status & CAN_SR_MB0) {  // mailbox 0 event
@@ -144,12 +144,14 @@ void TC0_Handler() {
   CAN1_Write(frame_value);
   frame_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
 
-  if (bits_after_prev_stuff >= 5 && !(frame_value == (frame_queue & 0b11111))) {
+  bool frame_val = frame_value;
+
+  if (bits_after_prev_stuff >= 5 && ((frame_val && ((frame_queue & 0x1F) == 0)) || (!frame_val && ((frame_queue & 0x1F) == 0x1F)))) {
     // if stuff bit, reset frame_samples
     bits_after_prev_stuff = 0;
   } else {
     // if not stuff bit, add to frame_queue
-    frame_queue = ((frame_queue & 0b1111111) << 1) | (uint8_t)frame_value;
+    frame_queue = ((frame_queue & 0b1111111) << 1) | (uint8_t)frame_val;
 
     // increment counters
     bits_after_prev_stuff++;
@@ -164,16 +166,21 @@ void TC0_Handler() {
     //   // if (data_length == 0) {
     //   //   stopTimer(TC0, 0, TC0_IRQn);
     //   // }
-    // } else 
-    if (frame_bits >= 20 && frame_bits <= 20 + data_length * 8) {
-      frame_data.val = (frame_data.val << 1) | (uint8_t)frame_value;
+    // } else
+    if (frame_bits >= 20 && frame_bits < 20 + data_length * 8) {
+      // if (frame_bits == 20) {
+      //   frame_data.val = 0;
+      // }
+      // uint8_t frame_data_ind = frame_bits - 20;
+      // frame_data.arr[frame_data_ind / 8] |= (frame_data_ind % 8) << (7 - frame_data_ind);
+      // frame_data.val = (frame_data.val << 1) | (uint8_t)frame_val;
 
-      if (frame_bits == 20 + data_length * 8) {
+      if (frame_bits == 20 + data_length * 8 - 1) {
         // hammer_data[0] = 4;
         // hmac_sha256(key, sizeof(key) - 1, frame_data.arr, data_length, hammer_data, 32);
 
         // start one bit after!
-        startTimer(TC1, 0, TC3_IRQn, frame_sync_delayed_freq);
+        startTimer(TC1, 0, TC3_IRQn, frame_sync_delayed_freq, TC_CMR_TCCLKS_TIMER_CLOCK3);
       }
     }
   }
@@ -183,18 +190,7 @@ void TC0_Handler() {
 void TC3_Handler() {
   TC_GetStatus(TC1, 0);
 
-  if (hammer_index < HAMMER_BIT_COUNT) {
-    // start TC6 to fire at first hammered bit (~20% mark)
-    startTimer(TC1, 1, TC4_IRQn, speed_freq);
-    startTimer(TC2, 1, TC7_IRQn, hammer_freq);
-
-    CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
-
-    reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
-
-    hammer_index++;
-    frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
-  }
+  startTimer(TC1, 1, TC4_IRQn, speed_freq, TC_CMR_TCCLKS_TIMER_CLOCK2);
 
   stopTimer(TC1, 0, TC3_IRQn);
 }
@@ -205,10 +201,11 @@ void TC4_Handler() {
 
   if (hammer_index < HAMMER_BIT_COUNT) {
     // start TC6 to fire 5 times in a bit (~20% mark)
-    startTimer(TC2, 1, TC7_IRQn, hammer_freq);
+    startTimer(TC2, 1, TC7_IRQn, hammer_freq, TC_CMR_TCCLKS_TIMER_CLOCK2);
 
-    reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
+    // reset_value = PIOA->PIO_PDSR & PIO_PA1A_CANRX0;
 
+    PIN_WRITE(1);
     CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
     hammer_index++;
     frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
@@ -228,7 +225,7 @@ void TC6_Handler() {
 
   // write first hammered bit for data bit
   // CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
-  PIN_WRITE(true);
+  CAN1_Write(true);
   hammer_index++;
 
   frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
@@ -242,19 +239,20 @@ void TC6_Handler() {
 void TC7_Handler() {
   TC_GetStatus(TC2, 1);
 
-  if (!frame_bit_hammered) {
-    // if bit in frame has not been completely hammered, continue with hammering
-    CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
-    // PIN_WRITE(true);
-    hammer_index++;
-    frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
-  } else {
+  // if (!frame_bit_hammered) {
+  //   // if bit in frame has not been completely hammered, continue with hammering
+  //   CAN1_Write((hammer_data[hammer_index / 8] >> (hammer_index % 8)) & 1);
+  //   // CAN1_Write(true);
+  //   hammer_index++;
+  //   frame_bit_hammered = hammer_index % HAMMER_SIZE == 0 || hammer_index == HAMMER_BIT_COUNT;
+  // } else {
     // reset value
-    CAN1_Write(reset_value);
+    PIN_WRITE(0);
+    // CAN1_Write(frame_value);
 
     // stop TC7 (stops hammering for the data bit)
     stopTimer(TC2, 1, TC7_IRQn);
-  }
+  // }
 }
 
 void CAN1_Handler() {
@@ -266,7 +264,7 @@ void CAN1_Handler() {
 
     if (checking_for_can1_sof) {
       // start separate timer for CANTX; fires instantly
-      startTimer(TC0, 1, TC1_IRQn, speed_freq);
+      startTimer(TC2, 2, TC8_IRQn, speed_freq, TC_CMR_TCCLKS_TIMER_CLOCK2);
 
       // turn on multiplexing
       PIOA->PIO_PER = PIO_PA0A_CANTX0;
@@ -274,12 +272,13 @@ void CAN1_Handler() {
       // set replicate_frame_queue
       replicate_frame_value = 0;
       CAN0_Write(0);
+      can_set_timestamp_capture_point(CAN1, 1);
     } else {
-      stopTimer(TC0, 1, TC1_IRQn);
+      stopTimer(TC2, 2, TC8_IRQn);
       PIOA->PIO_PDR = PIO_PA0A_CANTX0;
+      can_set_timestamp_capture_point(CAN1, 0);
     }
 
-    can_set_timestamp_capture_point(CAN1, (checking_for_can1_sof ? 1 : 0));
     checking_for_can1_sof = !checking_for_can1_sof;
   }
   if (ul_status & CAN_SR_MB0) {  // mailbox 0 event
@@ -309,21 +308,39 @@ void CAN1_Handler() {
 }
 
 // used to copy values to CAN0 from CAN1 by sampling CAN1
-void TC1_Handler() {
-  TC_GetStatus(TC0, 1);
+void TC8_Handler() {
+  TC_GetStatus(TC2, 2);
 
   CAN0_Write(replicate_frame_value);
   replicate_frame_value = PIOB->PIO_PDSR & PIO_PB15A_CANRX1;
 }
 
-void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
+void startTimer(Tc* tc, uint32_t channel, IRQn_Type irq, uint32_t frequency, uint32_t clock) {
   // disable write protect of PMC registers.
   pmc_set_writeprotect(false);
   // enable the specified peripheral clock.
   pmc_enable_periph_clk((uint32_t)irq);
 
-  TC_Configure(tc, channel, TC_CMR_WAVE | TC_CMR_WAVSEL_UP_RC | TC_CMR_TCCLKS_TIMER_CLOCK4);
-  uint32_t rc = VARIANT_MCK / 128 / frequency;
+  TC_Configure(tc, channel, TC_CMR_WAVE | TC_CMR_WAVSEL_UP_RC | TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_CLEAR | clock);
+  uint32_t rc = (float)VARIANT_MCK / (1 << (2 * clock + 1)) / frequency;
+
+  TC_SetRA(tc, channel, rc / 2);
+  TC_SetRC(tc, channel, rc);
+  TC_Start(tc, channel);
+
+  tc->TC_CHANNEL[channel].TC_IER = TC_IER_CPCS;
+  tc->TC_CHANNEL[channel].TC_IDR = ~TC_IER_CPCS;
+  NVIC_EnableIRQ(irq);
+}
+
+void startTimerWithPeriod(Tc* tc, uint32_t channel, IRQn_Type irq, float period, uint32_t clock) {
+  // disable write protect of PMC registers.
+  pmc_set_writeprotect(false);
+  // enable the specified peripheral clock.
+  pmc_enable_periph_clk((uint32_t)irq);
+
+  TC_Configure(tc, channel, TC_CMR_WAVE | TC_CMR_WAVSEL_UP_RC | TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_CLEAR | clock);
+  uint32_t rc = (float)VARIANT_MCK / (1 << (2 * clock + 1)) * period;
 
   TC_SetRA(tc, channel, rc / 2);
   TC_SetRC(tc, channel, rc);
@@ -342,6 +359,15 @@ void stopTimer(Tc* tc, uint32_t channel, IRQn_Type irq) {
 void setup() {
   // start serial port at 115200 bps
   Serial.begin(115200);
+
+ //  int cpuMult = (110 / 6) - 1;
+	// EFC0->EEFC_FMR = EEFC_FMR_FWS(4);
+	// EFC1->EEFC_FMR = EEFC_FMR_FWS(4);
+	// PMC->CKGR_PLLAR = (CKGR_PLLAR_ONE | CKGR_PLLAR_MULA(cpuMult) | CKGR_PLLAR_PLLACOUNT(0x3fUL) | CKGR_PLLAR_DIVA(1UL));
+	// while (!(PMC->PMC_SR & PMC_SR_LOCKA)) {}
+	// PMC->PMC_MCKR = ( PMC_MCKR_PRES_CLK_2 | PMC_MCKR_CSS_PLLA_CLK);
+	// while (!(PMC->PMC_SR & PMC_SR_MCKRDY)) {}
+	// SystemCoreClockUpdate();
 
   // PIOA power ON
   PMC->PMC_PCER0 |= PMC_PCER0_PID11;
